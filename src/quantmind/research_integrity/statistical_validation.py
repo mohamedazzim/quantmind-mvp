@@ -250,15 +250,21 @@ class DeflatedSharpeResult:
     passes_dsr_gate: bool
     population_hash: str
     dataset_version: str
+    dataset_sha256: str
+    split_manifest_version: str
+    split_manifest_sha256: str
     research_protocol_version: str
+    method_id: str
+    code_version: str
+    config_hash: str
 
 
 class DeflatedSharpeCalculator:
     """Computes the Deflated Sharpe Ratio (Bailey & López de Prado, 2014).
 
     Inputs are drawn exclusively from the authoritative production population
-    and EICT cluster results. Manual overrides of candidate Sharpe or trial count
-    are strictly rejected.
+    and EICT cluster results. Manual overrides of candidate Sharpe, trial count,
+    skewness, or kurtosis are strictly rejected.
     """
 
     def __init__(
@@ -312,15 +318,24 @@ class DeflatedSharpeCalculator:
         *,
         manual_sharpe: float | None = None,
         manual_trials: int | None = None,
+        manual_effective_trial_count: int | None = None,
+        manual_skew: float | None = None,
+        manual_kurtosis: float | None = None,
     ) -> DeflatedSharpeResult:
         """Calculate DSR for a specific trial within the population.
 
         Manual overrides are prohibited to prevent multiplicity bypassing.
         """
-        if manual_sharpe is not None or manual_trials is not None:
+        if (
+            manual_sharpe is not None
+            or manual_trials is not None
+            or manual_effective_trial_count is not None
+            or manual_skew is not None
+            or manual_kurtosis is not None
+        ):
             raise ValueError(
-                "manual overrides of observed_sharpe or effective_trial_count are prohibited; "
-                "DSR must derive strictly from the authoritative production population."
+                "manual overrides of observed_sharpe, effective_trial_count, skewness, or kurtosis "
+                "are prohibited; DSR must derive strictly from the authoritative production population."
             )
 
         if trial_id not in self._trial_map:
@@ -334,29 +349,33 @@ class DeflatedSharpeCalculator:
 
         sr = dist.observed_sharpe
         T = dist.effective_observations
+        if T < 2:
+            raise ValueError(
+                f"trial '{trial_id}' has sample length T={T} which is insufficient for "
+                f"DSR calculation (minimum T >= 2 required for sample standard error)"
+            )
+
         skew = dist.skewness
-        kurt_excess = dist.kurtosis
-        raw_kurt = kurt_excess + 3.0
+        kurt_excess = dist.excess_kurtosis
+        raw_kurt = dist.raw_kurtosis
         eff_count = self._eict_result.effective_trial_count
         emax = self.expected_max_sharpe()
 
-        if T <= 1:
-            se = 1.0
-            z = 0.0
-            dsr = 0.0
-        else:
-            # Mertens / Lo / Bailey-López de Prado standard error
-            var_term = (
-                1.0
-                - skew * sr
-                + ((raw_kurt - 1.0) / 4.0) * (sr ** 2)
-            ) / (T - 1.0)
-            se = math.sqrt(max(1e-12, var_term))
-            z = (sr - emax) / se
-            dsr = float(stats.norm.cdf(z))
+        # Mertens / Lo / Bailey-López de Prado standard error
+        # Formula: sqrt( (1 - gamma3 * SR + ((gamma4 - 1)/4) * SR^2) / (T - 1) )
+        # where gamma3 = skewness, gamma4 = raw (Pearson) kurtosis = kurt_excess + 3
+        var_term = (
+            1.0
+            - skew * sr
+            + ((raw_kurt - 1.0) / 4.0) * (sr ** 2)
+        ) / (T - 1.0)
+        se = math.sqrt(max(1e-12, var_term))
+        z = (sr - emax) / se
+        dsr = float(stats.norm.cdf(z))
 
         passes_gate = dsr >= self._significance_level
 
+        prov = trial.provenance
         return DeflatedSharpeResult(
             trial_id=trial.trial_id,
             strategy_id=trial.strategy_id,
@@ -374,7 +393,13 @@ class DeflatedSharpeCalculator:
             passes_dsr_gate=passes_gate,
             population_hash=self._eict_result.population_hash,
             dataset_version=trial.dataset_version,
+            dataset_sha256=prov.dataset_sha256,
+            split_manifest_version=prov.split_manifest_version,
+            split_manifest_sha256=prov.split_manifest_sha256,
             research_protocol_version=trial.research_protocol_version,
+            method_id=self._eict_result.method_id,
+            code_version=prov.code_version,
+            config_hash=prov.config_hash,
         )
 
 

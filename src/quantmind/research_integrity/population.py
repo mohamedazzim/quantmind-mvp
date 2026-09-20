@@ -82,6 +82,16 @@ class ReturnDistributionMetadata:
     effective_observations: int  # same as trade_count (MVP: no autocorr adjustment)
     observed_sharpe: float       # mean / std if std > 0, else 0.0
 
+    @property
+    def excess_kurtosis(self) -> float:
+        """Fisher's excess kurtosis (normal distribution = 0.0)."""
+        return self.kurtosis
+
+    @property
+    def raw_kurtosis(self) -> float:
+        """Pearson's raw kurtosis gamma4 = excess_kurtosis + 3.0 (normal distribution = 3.0)."""
+        return self.kurtosis + 3.0
+
 
 def compute_return_distribution(trial_id: str, net_returns: np.ndarray) -> ReturnDistributionMetadata:
     """Compute DSR input statistics from a net_return_bps array."""
@@ -433,8 +443,9 @@ class EictCorr1InputBuilder:
         4. If insufficient: distance = NaN, mark as singleton candidate.
         5. Identify trials that have no sufficient-overlap partner → singletons.
         """
-        trial_ids = [t.trial_id for t in trials]
-        n = len(trials)
+        sorted_trials = sorted(trials, key=lambda t: t.trial_id)
+        trial_ids = [t.trial_id for t in sorted_trials]
+        n = len(sorted_trials)
 
         pairwise: list[Eict1PairwiseInput] = []
         corr_matrix = np.full((n, n), np.nan)
@@ -444,7 +455,7 @@ class EictCorr1InputBuilder:
 
         for i in range(n):
             for j in range(i + 1, n):
-                ta, tb = trials[i], trials[j]
+                ta, tb = sorted_trials[i], sorted_trials[j]
                 _, aligned_a, aligned_b = align_pair(
                     ta.signal_timestamps, ta.net_returns,
                     tb.signal_timestamps, tb.net_returns,

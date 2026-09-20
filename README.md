@@ -6,7 +6,7 @@ Futures-first AI-assisted quantitative research laboratory.
 
 **Stage 1: deterministic backtester + synthetic research-integrity harness + split/holdout manager + statistical validation (EICT + DSR)**
 
-Current verification: **178 tests passing** across synthetic market generation, real gap/wick semantics, cross-session surrogates, directional intraday nulls, recomputable causal positive controls, independent wick preservation, paired edge recovery, one-sided confidence-bound gates, look-ahead canary, checksum-verified Dataset Registry, immutable SplitManifest, purge and embargo boundaries, sealed final holdout security, holdout state machine, comprehensive adversarial integrity tests, immutable OOS return Parquet artifacts, SHA-256 byte verification, production population accounting, EICT-CORR-1 hierarchical clustering, Deflated Sharpe Ratio multiple-testing adjustment (Bailey & López de Prado 2014), and multiple-testing anti-bypass guards.
+Current verification: **206 tests passing** across synthetic market generation, real gap/wick semantics, cross-session surrogates, directional intraday nulls, recomputable causal positive controls, independent wick preservation, paired edge recovery, one-sided confidence-bound gates, look-ahead canary, checksum-verified Dataset Registry, immutable SplitManifest, purge and embargo boundaries, sealed final holdout security, holdout state machine, comprehensive adversarial integrity tests, immutable OOS return Parquet artifacts, SHA-256 byte verification, production population accounting, EICT-CORR-1 hierarchical clustering, Deflated Sharpe Ratio multiple-testing adjustment (Bailey & López de Prado 2014), permutation-invariant clustering, and multiple-testing anti-bypass guards.
 
 The synthetic harness is intentionally a research fixture, not a market model. Its purpose is to make the deterministic backtest and research-integrity layers falsifiable before any paid historical market data is purchased or frozen.
 
@@ -25,7 +25,7 @@ The synthetic harness is intentionally a research fixture, not a market model. I
 11. Checksum-verified Dataset Registry + named split-zone loader; production harness accepts LICENSED data only
 12. Purged/embargoed split manager and sealed holdout (v3.5)
 13. Research population accounting + trial return artifacts + EICT-CORR-1 / DSR inputs (v3.6)
-14. Statistical validation: EICT-CORR-1 + Deflated Sharpe Ratio (v3.7)
+14. Statistical validation: EICT-CORR-1 + Deflated Sharpe Ratio (v3.7 / v3.7.1)
 15. Bounded research agents
 
 ## Production Research Architecture
