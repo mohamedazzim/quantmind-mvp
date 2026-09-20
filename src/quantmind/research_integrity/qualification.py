@@ -113,14 +113,11 @@ ALLOWED_VALIDATION_TRANSITIONS: Mapping[ValidationStatus, frozenset[ValidationSt
             ValidationStatus.REJECTED,
         }
     ),
-    ValidationStatus.PAPER_ELIGIBLE: frozenset(
-        {
-            ValidationStatus.REJECTED,
-        }
-    ),
+    ValidationStatus.PAPER_ELIGIBLE: frozenset(),
     ValidationStatus.REJECTED: frozenset(),
     ValidationStatus.REJECTED_FINAL_HOLDOUT: frozenset(),
 }
+
 
 
 def validate_transition(current: ValidationStatus, target: ValidationStatus) -> None:
@@ -602,22 +599,40 @@ class StrategyValidationGate:
         **kwargs: Any,
     ) -> tuple[StrategyQualificationRecord, ValidationReport]:
         """Evaluate candidate strategy validation trial against authoritative evidence."""
-        # 1. Reject any attempt to pass manual statistical overrides
+        # 1. Reject any attempt to pass manual statistical overrides or unauthorized caller parameters
         prohibited_overrides = {
             "manual_sharpe",
+            "sharpe",
             "manual_dsr",
+            "dsr",
             "manual_trials",
+            "manual_trial_count",
+            "trial_count",
             "manual_effective_trial_count",
+            "effective_trial_count",
             "manual_skew",
             "manual_kurtosis",
             "manual_holdout",
+            "manual_holdout_state",
+            "holdout_state",
+            "manual_trade_count",
+            "trade_count",
+            "manual_population_hash",
+            "population_hash",
+            "manual_dataset_sha256",
+            "dataset_sha256",
+            "manual_dataset_version",
+            "dataset_identity",
+            "manual_dataset_identity",
         }
-        found_prohibited = prohibited_overrides.intersection(kwargs.keys())
-        if found_prohibited:
+        if kwargs:
+            keys = sorted(kwargs.keys())
             raise ValueError(
-                f"Manual statistical overrides ({sorted(found_prohibited)}) are strictly prohibited; "
+                f"Manual statistical overrides or caller-supplied parameters ({keys}) are strictly prohibited; "
                 "qualification metrics must derive exclusively from authoritative system evidence."
             )
+
+
 
         # 2. Retrieve and verify validation trial from authoritative TrialLedger
         try:

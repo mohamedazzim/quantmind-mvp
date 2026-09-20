@@ -165,12 +165,18 @@ class TestValidationStateMachine:
         validate_transition(ValidationStatus.VALIDATION, ValidationStatus.HOLDOUT_REQUIRED)
         validate_transition(ValidationStatus.HOLDOUT_REQUIRED, ValidationStatus.HOLDOUT_PASSED)
         validate_transition(ValidationStatus.HOLDOUT_PASSED, ValidationStatus.PAPER_ELIGIBLE)
-        validate_transition(ValidationStatus.PAPER_ELIGIBLE, ValidationStatus.REJECTED)
 
     def test_illegal_state_transitions(self) -> None:
+        # Cannot transition from PAPER_ELIGIBLE to REJECTED or VALIDATION
+        with pytest.raises(InvalidStateTransitionError, match="Illegal validation status transition"):
+            validate_transition(ValidationStatus.PAPER_ELIGIBLE, ValidationStatus.REJECTED)
+        with pytest.raises(InvalidStateTransitionError, match="Illegal validation status transition"):
+            validate_transition(ValidationStatus.PAPER_ELIGIBLE, ValidationStatus.VALIDATION)
+
         # Cannot jump from CANDIDATE to PAPER_ELIGIBLE
         with pytest.raises(InvalidStateTransitionError, match="Illegal validation status transition"):
             validate_transition(ValidationStatus.CANDIDATE, ValidationStatus.PAPER_ELIGIBLE)
+
 
         # Cannot jump from REJECTED to PAPER_ELIGIBLE
         with pytest.raises(InvalidStateTransitionError, match="Illegal validation status transition"):
