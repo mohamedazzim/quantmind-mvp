@@ -4,9 +4,9 @@ Futures-first AI-assisted quantitative research laboratory.
 
 ## Current build stage
 
-**Stage 1: deterministic backtester + synthetic research-integrity harness + split/holdout manager + statistical validation (EICT + DSR) + strategy validation gate (v3.8)**
+**Stage 1: deterministic backtester + synthetic research-integrity harness + split/holdout manager + statistical validation (EICT + DSR) + strategy validation gate + deterministic paper replay engine (v3.9)**
 
-Current verification: **243 tests passing** across synthetic market generation, real gap/wick semantics, cross-session surrogates, directional intraday nulls, recomputable causal positive controls, independent wick preservation, paired edge recovery, one-sided confidence-bound gates, look-ahead canary, checksum-verified Dataset Registry, immutable SplitManifest, purge and embargo boundaries, sealed final holdout security, holdout state machine, comprehensive adversarial integrity tests, immutable OOS return Parquet artifacts, SHA-256 byte verification, production population accounting, EICT-CORR-1 hierarchical clustering, Deflated Sharpe Ratio multiple-testing adjustment (Bailey & López de Prado 2014), permutation-invariant clustering, multiple-testing anti-bypass guards, deterministic Strategy Validation Gate, immutable Strategy Qualification Records with canonical SHA-256 digests, append-only SQLite qualification ledger triggers, Strategy Registry lifecycle state machine, and Paper Replay eligibility verification.
+Current verification: **313 tests passing** across synthetic market generation, real gap/wick semantics, cross-session surrogates, directional intraday nulls, recomputable causal positive controls, independent wick preservation, paired edge recovery, one-sided confidence-bound gates, look-ahead canary, checksum-verified Dataset Registry, immutable SplitManifest, purge and embargo boundaries, sealed final holdout security, holdout state machine, comprehensive adversarial integrity tests, immutable OOS return Parquet artifacts, SHA-256 byte verification, production population accounting, EICT-CORR-1 hierarchical clustering, Deflated Sharpe Ratio multiple-testing adjustment (Bailey & López de Prado 2014), permutation-invariant clustering, multiple-testing anti-bypass guards, deterministic Strategy Validation Gate, immutable Strategy Qualification Records with canonical SHA-256 digests, append-only SQLite qualification ledger triggers, Strategy Registry lifecycle state machine, normalized MarketDataFeed streaming, deterministic PaperReplayEngine execution, pre-trade risk controls, append-only PaperLedger, and deterministic SHA-256 ReplayReport verification.
 
 The synthetic harness is intentionally a research fixture, not a market model. Its purpose is to make the deterministic backtest and research-integrity layers falsifiable before any paid historical market data is purchased or frozen.
 
@@ -27,7 +27,8 @@ The synthetic harness is intentionally a research fixture, not a market model. I
 13. Research population accounting + trial return artifacts + EICT-CORR-1 / DSR inputs (v3.6)
 14. Statistical validation: EICT-CORR-1 + Deflated Sharpe Ratio (v3.7 / v3.7.1)
 15. Strategy Validation Gate + Immutable Qualification Record (v3.8)
-16. Bounded research agents
+16. Deterministic Paper Replay Engine + Normalized Replay Feed + Pre-Trade Risk Controls (v3.9)
+17. Bounded research agents
 
 
 ## Production Research Architecture
@@ -63,8 +64,26 @@ QualificationLedger (append-only SQLite table with delete/update abort triggers)
     ↓
 StrategyRegistry (lifecycle state machine enforcing qualification record for PAPER_ELIGIBLE)
     ↓
-PaperReplayEligibility (bridge certifying readiness for deterministic forward replay)
+PaperReplayEngine (accepts PAPER_ELIGIBLE + PASSED holdout, checks spec & dataset hash)
+    ↓
+ReplayFeed (normalized MarketDataFeed interface, fast vectorized streaming)
+    ↓
+PaperRiskEngine (evaluates 7 deterministic pre-trade risk rules)
+    ↓
+PaperLedger (append-only SQLite ledger with triggers: orders, fills, positions, risk events)
+    ↓
+ReplayReport (deterministic observational report sealed with SHA-256 report_hash)
 ```
+
+### Deterministic Paper Replay Engine, Replay Feed, & Risk Controls (v3.9)
+
+- **`MarketDataFeed` & `ReplayFeed`**: Normalized market data feed interface with high-performance zero-overhead streaming via pre-extracted NumPy arrays. Tracks session boundaries, supports pause/resume/reset, and strictly prohibits access to sealed `FINAL_HOLDOUT` partitions (`MarketFeedSecurityError`).
+- **Qualification Gating & Provenance Verification**: Replay strictly requires an authoritative `StrategyQualificationRecord` with `final_status == ValidationStatus.PAPER_ELIGIBLE` and `holdout_state == "PASSED"`. Verifies cryptographic record digest, strategy specification hash match, strategy ID match, dataset checksum match, and protocol version compatibility. Synthetic/fixture datasets are barred from production paper replay.
+- **Deterministic Execution Model (`next_bar_open_v1`)**: Causal execution executing bar $t$ signal at bar $t+1$ open with realistic slippage modeling (`slippage_bps_per_side`), price quantization to instrument tick size (e.g. 0.05 for NIFTY futures), date-effective cost schedule resolution (`CostSchedule`), and multi-bar holding duration.
+- **Pre-Trade Deterministic Risk Engine (`PaperRiskEngine`)**: Evaluates 7 deterministic pre-trade risk rules (`kill_switch`, `max_order_quantity`, `max_position`, `max_trades_per_session`, `max_daily_loss`, `max_strategy_drawdown`, `max_exposure`). Rejections generate immutable `PaperRiskEvent` audit records and set order status to `REJECTED`.
+- **Append-Only Paper Ledger (`PaperLedger`)**: Backed by SQLite tables (`paper_orders`, `paper_fills`, `paper_positions`, `paper_risk_events`, `replay_reports`) protected by database triggers preventing deletions or updates.
+- **Deterministic Observational Report (`ReplayReport`)**: Produces observational performance summaries (gross/net P&L, costs, slippage, max drawdown, exposure, win rate, expectancy, Sharpe) sealed with a deterministic SHA-256 `report_hash` over its canonical JSON representation.
+- **Strict No-Live-Trading Boundary**: Zero broker network endpoints, credentials, or live order routing. Execution is entirely simulated.
 
 ### Strategy Validation Gate & Immutable Qualification Record (v3.8)
 
