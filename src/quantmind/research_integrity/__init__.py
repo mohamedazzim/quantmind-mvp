@@ -36,6 +36,14 @@ from .population import (
     build_dsr_inputs,
     compute_return_distribution,
 )
+from .statistical_validation import (
+    DeflatedSharpeCalculator,
+    DeflatedSharpeResult,
+    EictClusterResult,
+    EictCorr1Calculator,
+    StatisticalValidationPipeline,
+    compute_population_hash,
+)
 
 __all__ = [
     "clopper_pearson_lower",
@@ -76,4 +84,11 @@ __all__ = [
     "align_pair",
     "build_dsr_inputs",
     "compute_return_distribution",
+    # statistical validation
+    "DeflatedSharpeCalculator",
+    "DeflatedSharpeResult",
+    "EictClusterResult",
+    "EictCorr1Calculator",
+    "StatisticalValidationPipeline",
+    "compute_population_hash",
 ]

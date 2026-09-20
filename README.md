@@ -4,9 +4,9 @@ Futures-first AI-assisted quantitative research laboratory.
 
 ## Current build stage
 
-**Stage 1: deterministic backtester + synthetic research-integrity harness + split/holdout manager + research population accounting**
+**Stage 1: deterministic backtester + synthetic research-integrity harness + split/holdout manager + statistical validation (EICT + DSR)**
 
-Current verification: **129 tests passing** across synthetic market generation, real gap/wick semantics, cross-session surrogates, directional intraday nulls, recomputable causal positive controls, independent wick preservation, paired edge recovery, one-sided confidence-bound gates, look-ahead canary, checksum-verified Dataset Registry, immutable SplitManifest, purge and embargo boundaries, sealed final holdout security, holdout state machine, comprehensive adversarial integrity tests, immutable OOS return Parquet artifacts, SHA-256 byte verification, production population accounting, and EICT-CORR-1 / DSR input preparation.
+Current verification: **178 tests passing** across synthetic market generation, real gap/wick semantics, cross-session surrogates, directional intraday nulls, recomputable causal positive controls, independent wick preservation, paired edge recovery, one-sided confidence-bound gates, look-ahead canary, checksum-verified Dataset Registry, immutable SplitManifest, purge and embargo boundaries, sealed final holdout security, holdout state machine, comprehensive adversarial integrity tests, immutable OOS return Parquet artifacts, SHA-256 byte verification, production population accounting, EICT-CORR-1 hierarchical clustering, Deflated Sharpe Ratio multiple-testing adjustment (Bailey & López de Prado 2014), and multiple-testing anti-bypass guards.
 
 The synthetic harness is intentionally a research fixture, not a market model. Its purpose is to make the deterministic backtest and research-integrity layers falsifiable before any paid historical market data is purchased or frozen.
 
@@ -25,7 +25,7 @@ The synthetic harness is intentionally a research fixture, not a market model. I
 11. Checksum-verified Dataset Registry + named split-zone loader; production harness accepts LICENSED data only
 12. Purged/embargoed split manager and sealed holdout (v3.5)
 13. Research population accounting + trial return artifacts + EICT-CORR-1 / DSR inputs (v3.6)
-14. DSR/PBO research-integrity layer
+14. Statistical validation: EICT-CORR-1 + Deflated Sharpe Ratio (v3.7)
 15. Bounded research agents
 
 ## Production Research Architecture
@@ -49,8 +49,19 @@ ArtifactRegistry (persists immutable OOS returns Parquet with SHA-256 digest)
     ↓
 TrialLedger (append-only, immutable completed trials with split_zone & artifact hash)
     ↓
-ProductionPopulationQuery + EICT-CORR-1 / DSR Input Preparation
+ProductionPopulationQuery (authoritative production trial filter)
+    ↓
+EictCorr1Calculator (hierarchical average-linkage clustering, singleton isolation)
+    ↓
+DeflatedSharpeCalculator (Bailey & López de Prado DSR formulation)
 ```
+
+### Statistical Validation: EICT-CORR-1 + Deflated Sharpe Ratio (v3.7)
+
+- **LAYER A — EICT-CORR-1**: Computes effective independent trial count via hierarchical clustering with average linkage at distance threshold $0.6325$ ($\sqrt{2(1 - 0.80)}$). Sparse trials ($< 100$ common observations) are isolated as singleton clusters. Outputs deterministic cluster mappings and cryptographic `population_hash`.
+- **LAYER B — Deflated Sharpe Ratio (DSR)**: Implements Bailey & López de Prado (2014) formulation adjusting for selection bias, effective trial count ($N = \text{effective\_trial\_count}$), non-normality (skewness, Fisher excess kurtosis), and sample length $T$.
+- **Multiple-Testing Guard**: Rigid architectural enforcement barring manual overrides of `observed_sharpe` or `effective_trial_count`. All statistical evaluations must anchor to an authoritative `ProductionPopulationQuery`.
+- **Integrated Pipeline**: `StatisticalValidationPipeline` automates population loading, EICT clustering, and candidate DSR evaluation.
 
 ### Research Population Accounting & OOS Return Artifacts (v3.6)
 
