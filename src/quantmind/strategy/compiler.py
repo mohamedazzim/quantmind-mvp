@@ -118,3 +118,10 @@ class StrategyCompiler:
 
 def compile_strategy_spec(spec: StrategySpec) -> SignalFunction:
     return StrategyCompiler.compile(spec)
+
+
+def derive_strategy_id(strategy_spec: StrategySpec) -> str:
+    """Derive identity from normalized logic only; strategy_version is metadata."""
+    import hashlib
+    normalized = normalize_strategy_spec(strategy_spec)
+    return "STRAT-" + hashlib.sha256(normalized.logic_canonical_json().encode()).hexdigest()[:24]

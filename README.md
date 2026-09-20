@@ -4,9 +4,9 @@ Futures-first AI-assisted quantitative research laboratory.
 
 ## Current build stage
 
-**Stage 1: deterministic backtester + synthetic research-integrity harness + split/holdout manager + statistical validation (EICT + DSR)**
+**Stage 1: deterministic backtester + synthetic research-integrity harness + split/holdout manager + statistical validation (EICT + DSR) + strategy validation gate (v3.8)**
 
-Current verification: **206 tests passing** across synthetic market generation, real gap/wick semantics, cross-session surrogates, directional intraday nulls, recomputable causal positive controls, independent wick preservation, paired edge recovery, one-sided confidence-bound gates, look-ahead canary, checksum-verified Dataset Registry, immutable SplitManifest, purge and embargo boundaries, sealed final holdout security, holdout state machine, comprehensive adversarial integrity tests, immutable OOS return Parquet artifacts, SHA-256 byte verification, production population accounting, EICT-CORR-1 hierarchical clustering, Deflated Sharpe Ratio multiple-testing adjustment (Bailey & López de Prado 2014), permutation-invariant clustering, and multiple-testing anti-bypass guards.
+Current verification: **243 tests passing** across synthetic market generation, real gap/wick semantics, cross-session surrogates, directional intraday nulls, recomputable causal positive controls, independent wick preservation, paired edge recovery, one-sided confidence-bound gates, look-ahead canary, checksum-verified Dataset Registry, immutable SplitManifest, purge and embargo boundaries, sealed final holdout security, holdout state machine, comprehensive adversarial integrity tests, immutable OOS return Parquet artifacts, SHA-256 byte verification, production population accounting, EICT-CORR-1 hierarchical clustering, Deflated Sharpe Ratio multiple-testing adjustment (Bailey & López de Prado 2014), permutation-invariant clustering, multiple-testing anti-bypass guards, deterministic Strategy Validation Gate, immutable Strategy Qualification Records with canonical SHA-256 digests, append-only SQLite qualification ledger triggers, Strategy Registry lifecycle state machine, and Paper Replay eligibility verification.
 
 The synthetic harness is intentionally a research fixture, not a market model. Its purpose is to make the deterministic backtest and research-integrity layers falsifiable before any paid historical market data is purchased or frozen.
 
@@ -26,7 +26,9 @@ The synthetic harness is intentionally a research fixture, not a market model. I
 12. Purged/embargoed split manager and sealed holdout (v3.5)
 13. Research population accounting + trial return artifacts + EICT-CORR-1 / DSR inputs (v3.6)
 14. Statistical validation: EICT-CORR-1 + Deflated Sharpe Ratio (v3.7 / v3.7.1)
-15. Bounded research agents
+15. Strategy Validation Gate + Immutable Qualification Record (v3.8)
+16. Bounded research agents
+
 
 ## Production Research Architecture
 
@@ -54,7 +56,26 @@ ProductionPopulationQuery (authoritative production trial filter)
 EictCorr1Calculator (hierarchical average-linkage clustering, singleton isolation)
     ↓
 DeflatedSharpeCalculator (Bailey & López de Prado DSR formulation)
+    ↓
+StrategyValidationGate (authoritative gate, protocol sample size requirements, holdout verification)
+    ↓
+QualificationLedger (append-only SQLite table with delete/update abort triggers)
+    ↓
+StrategyRegistry (lifecycle state machine enforcing qualification record for PAPER_ELIGIBLE)
+    ↓
+PaperReplayEligibility (bridge certifying readiness for deterministic forward replay)
 ```
+
+### Strategy Validation Gate & Immutable Qualification Record (v3.8)
+
+- **`StrategyValidationGate`**: Deterministic gate consuming authoritative system evidence only (`DatasetRegistry`, `SplitManifest`, `HoldoutManager`, `TrialLedger`, `ProductionPopulationQuery`, `EICT-CORR-1`, `DSR`, and `StrategySpec`). Rejects any manual statistical overrides (`manual_sharpe`, `manual_dsr`, `manual_trials`). Dynamically evaluates protocol-defined sample size requirements (`minimum_trades_validation`, `minimum_effective_outcome_observations`).
+- **`StrategyQualificationRecord`**: Frozen dataclass containing complete provenance, observed Sharpe, DSR, EICT, trade count, holdout state, robustness status, and validation status, sealed by a SHA-256 digest over its canonical JSON.
+- **`QualificationLedger`**: Append-only SQLite ledger with triggers raising SQL integrity errors on any `DELETE` or `UPDATE` attempt.
+- **Validation State Machine**: Enforces legal transitions (`CANDIDATE` -> `UNDERPOWERED` / `VALIDATION` / `REJECTED` / `HOLDOUT_REQUIRED` -> `HOLDOUT_PASSED` -> `PAPER_ELIGIBLE`). Illegal shortcuts (e.g. `REJECTED` -> `PAPER_ELIGIBLE` or `UNDERPOWERED` -> `PAPER_ELIGIBLE`) are permanently barred.
+- **`StrategyRegistry`**: Tracks lifecycle states (`IDEA` -> `RESEARCH` -> `VALIDATION` -> `PAPER_ELIGIBLE` -> `PAPER_ACTIVE` -> `DEGRADED` -> `RETIRED`). Transition to `PAPER_ELIGIBLE` strictly requires an authoritative, cryptographically verified `StrategyQualificationRecord` with `final_status == ValidationStatus.PAPER_ELIGIBLE` and `holdout_state == "PASSED"`.
+- **`PaperReplayEligibility`**: Cryptographically verifies qualifications to authorize deterministic forward replay testing without starting live broker trading.
+
+
 
 ### Statistical Validation: EICT-CORR-1 + Deflated Sharpe Ratio (v3.7)
 

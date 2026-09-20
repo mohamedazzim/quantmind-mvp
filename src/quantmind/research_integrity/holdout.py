@@ -17,8 +17,9 @@ from quantmind.backtest.strategies import NonCausalSignalError, assert_causal_si
 from quantmind.data import DatasetKind, DatasetRegistry
 from quantmind.data.splits import SplitZone
 from quantmind.strategy import StrategySpec, compile_strategy_spec, normalize_strategy_spec
-from .harness import derive_experiment_id, derive_strategy_id
-from .trial_ledger import ResearchBudget, TrialContext, TrialLedger
+from quantmind.strategy.compiler import derive_strategy_id
+from .trial_ledger import ResearchBudget, TrialContext, TrialLedger, derive_experiment_id
+
 
 
 class HoldoutSecurityError(RuntimeError):

@@ -63,6 +63,12 @@ class TrialBudgetExceeded(RuntimeError):
     """Raised when a cumulative research population would exceed its budget."""
 
 
+def derive_experiment_id(research_task_id: str) -> str:
+    import hashlib
+    return "EXP-" + hashlib.sha256(research_task_id.encode()).hexdigest()[:24]
+
+
+
 class TrialLedger:
     """Authoritative append-only trial ledger.
 
