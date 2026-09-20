@@ -1,0 +1,71 @@
+protocol_version: RP-2
+instrument: NIFTY_50_FUTURES
+bar_interval: 1m
+execution_model: next_bar_open_v1
+intrabar_priority: adverse_first_v1
+
+sample_requirements:
+  minimum_trades_total: 300
+  minimum_trades_validation: 75
+  minimum_trades_final_holdout: 50
+  minimum_sessions_total: 250
+  minimum_sessions_oos: 60
+  minimum_distinct_regimes: 3
+  minimum_effective_outcome_observations: 100
+
+synthetic_acquisition_gate:
+  min_surrogate_runs: 200
+  false_pass_rate_limit: 0.05
+  false_pass_confidence: 0.95
+  max_false_passes: 4
+  min_positive_control_runs: 100
+  positive_detection_rate_limit: 0.80
+  positive_detection_confidence: 0.95
+  min_positive_detections: 87
+  edge_ladder_net_bps: [0.25, 0.5, 1.0, 2.0, 4.0, 10.0]
+  strong_positive_control:
+    round_trip_cost_bps: 2.0
+    net_edge_bps: 10.0
+    gross_edge_bps: 12.0
+    condition: "prior_volume_tail_oi_direction"
+    signal_window: [0.10, 0.90]
+    tail_quantile: 0.993
+    lookback_sessions: 20
+    calendar_session_bars: 375
+    target_triggers_per_session: [1.0, 3.0]
+    max_lag1_autocorrelation: 0.05
+
+split_protocol:
+  boundary_policy: purged_embargoed_v1
+  research_validation:
+    purge_bars: "max_feature_lookback_plus_label_horizon"
+    embargo_bars: "max_feature_lookback_plus_label_horizon"
+  validation_holdout:
+    purge_bars: "max_feature_lookback_plus_label_horizon"
+    embargo_bars: "max_feature_lookback_plus_label_horizon"
+  holdout_forward:
+    purge_bars: "max_holding_period"
+    embargo_bars: "max_holding_period"
+
+# Date-effective execution costs are supplied by a versioned cost-schedule package.
+# The real-data acquisition task must record provider, effective dates, and source references.
+
+# Detection note:
+# The synthetic acquisition gate is a one-sided 95% confidence-bound criterion.
+# n=200 requires <=4 false passes; n=100 requires >=87 detections.
+
+effective_trial_count_method:
+  id: EICT-CORR-1
+  population_scope:
+    keys: [dataset_version, research_protocol_version]
+  correlation_measure: pearson
+  linkage: average
+  correlation_threshold: 0.80
+  distance_threshold: 0.6325
+  minimum_overlap_observations: 100
+  insufficient_overlap_policy: singleton_cluster
+
+final_holdout_gate:
+  minimum_trades: 50
+  min_net_mean_trade_return: 0.0
+  max_relative_degradation_vs_validation: 0.50
