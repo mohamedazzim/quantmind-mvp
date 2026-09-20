@@ -12,6 +12,30 @@ from .holdout import (
     HoldoutSecurityError,
     HoldoutState,
 )
+from .artifacts import (
+    ArtifactImmutabilityError,
+    ArtifactRecord,
+    ArtifactRegistry,
+    ArtifactStatus,
+    ArtifactType,
+    load_net_returns_array,
+    load_oos_returns_verified,
+    load_signal_timestamps_array,
+    write_oos_returns_artifact,
+)
+from .population import (
+    DsrPopulationInputs,
+    Eict1PairwiseInput,
+    Eict1PopulationInputs,
+    EictCorr1InputBuilder,
+    EligibleTrial,
+    ProductionPopulationQuery,
+    ReturnDistributionMetadata,
+    TrialProvenance,
+    align_pair,
+    build_dsr_inputs,
+    compute_return_distribution,
+)
 
 __all__ = [
     "clopper_pearson_lower",
@@ -30,4 +54,26 @@ __all__ = [
     "HoldoutManager",
     "HoldoutSecurityError",
     "HoldoutState",
+    # artifacts
+    "ArtifactImmutabilityError",
+    "ArtifactRecord",
+    "ArtifactRegistry",
+    "ArtifactStatus",
+    "ArtifactType",
+    "load_net_returns_array",
+    "load_oos_returns_verified",
+    "load_signal_timestamps_array",
+    "write_oos_returns_artifact",
+    # population
+    "DsrPopulationInputs",
+    "Eict1PairwiseInput",
+    "Eict1PopulationInputs",
+    "EictCorr1InputBuilder",
+    "EligibleTrial",
+    "ProductionPopulationQuery",
+    "ReturnDistributionMetadata",
+    "TrialProvenance",
+    "align_pair",
+    "build_dsr_inputs",
+    "compute_return_distribution",
 ]

@@ -52,6 +52,11 @@ class TrialContext:
     strategy_spec_json: str = "{}"
     mode: str = "PRODUCTION"
     dataset_kind: str = "LICENSED"
+    dataset_sha256: str = ""
+    split_manifest_version: str = ""
+    split_manifest_sha256: str = ""
+    code_version: str = "0.1.0"
+    config_hash: str = ""
 
 
 class TrialBudgetExceeded(RuntimeError):
@@ -106,6 +111,11 @@ class TrialLedger:
                 result_json TEXT,
                 mode TEXT NOT NULL CHECK (mode IN ('PRODUCTION','FIXTURE')),
                 dataset_kind TEXT NOT NULL CHECK (dataset_kind IN ('SYNTHETIC','LICENSED')),
+                dataset_sha256 TEXT NOT NULL DEFAULT '',
+                split_manifest_version TEXT NOT NULL DEFAULT '',
+                split_manifest_sha256 TEXT NOT NULL DEFAULT '',
+                code_version TEXT NOT NULL DEFAULT '0.1.0',
+                config_hash TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL CHECK (
                     status IN ('RUNNING','COMPLETED','FAILED','REJECTED_NONCAUSAL','ABANDONED','REJECTED_FINAL_HOLDOUT')
                 )
@@ -125,7 +135,8 @@ class TrialLedger:
                 trial_id, experiment_id, strategy_id, dataset_version, split_zone, research_protocol_version,
                 feature_version, parameter_set_json, strategy_spec_json, seed, execution_model,
                 cost_model, slippage_model, timestamp_started, estimated_runtime_minutes,
-                estimated_llm_cost, mode, dataset_kind
+                estimated_llm_cost, mode, dataset_kind, dataset_sha256, split_manifest_version,
+                split_manifest_sha256, code_version, config_hash
             ON trials
             WHEN OLD.status = 'RUNNING'
             BEGIN
@@ -227,8 +238,10 @@ class TrialLedger:
                     research_protocol_version, feature_version, parameter_set_json, strategy_spec_json,
                     seed, execution_model, cost_model, slippage_model,
                     timestamp_started, estimated_runtime_minutes,
-                    estimated_llm_cost, mode, dataset_kind, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'RUNNING')
+                    estimated_llm_cost, mode, dataset_kind,
+                    dataset_sha256, split_manifest_version, split_manifest_sha256, code_version, config_hash,
+                    status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'RUNNING')
                 """,
                 (
                     context.trial_id,
@@ -249,6 +262,11 @@ class TrialLedger:
                     context.estimated_llm_cost,
                     context.mode,
                     context.dataset_kind,
+                    context.dataset_sha256,
+                    context.split_manifest_version,
+                    context.split_manifest_sha256,
+                    context.code_version,
+                    context.config_hash,
                 ),
             )
             self._connection.execute("COMMIT")

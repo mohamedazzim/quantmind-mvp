@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import time
 from dataclasses import dataclass
+from pathlib import Path
 import uuid
 
 from quantmind.backtest.engine import BacktestConfig, BacktestEngine, BacktestResult
@@ -11,6 +12,7 @@ from quantmind.data import DatasetKind, DatasetRegistry
 from quantmind.data.splits import SplitZone
 from quantmind.strategy import StrategySpec, compile_strategy_spec, normalize_strategy_spec
 from .trial_ledger import ResearchBudget, TrialContext, TrialLedger
+from .artifacts import ArtifactRegistry, ArtifactType, write_oos_returns_artifact
 
 
 @dataclass(frozen=True)
@@ -38,6 +40,11 @@ class ResearchHarness:
     checksum-verified DatasetRegistry and accept only declarative StrategySpec.
     Synthetic/fixture datasets and arbitrary signal callables are excluded from
     this production API.
+
+    If *artifact_registry* is provided, every completed PRODUCTION trial will
+    have its OOS trade-level return stream written to a Parquet artifact and
+    registered in the registry.  *artifact_dir* specifies where to store the
+    files on disk (defaults to ``./artifacts`` in the current working directory).
     """
 
     def __init__(
@@ -46,11 +53,15 @@ class ResearchHarness:
         ledger: TrialLedger,
         dataset_registry: DatasetRegistry,
         holdout_manager: HoldoutManager | None = None,
+        artifact_registry: ArtifactRegistry | None = None,
+        artifact_dir: Path | str | None = None,
     ) -> None:
         self._engine = engine
         self._ledger = ledger
         self._dataset_registry = dataset_registry
         self._holdout_manager = holdout_manager or HoldoutManager(engine, ledger, dataset_registry)
+        self._artifact_registry = artifact_registry
+        self._artifact_dir = Path(artifact_dir) if artifact_dir is not None else Path("artifacts")
 
     def run_trial(
         self,
@@ -103,6 +114,12 @@ class ResearchHarness:
             allowed_kinds={DatasetKind.LICENSED},
         )
 
+        split_m = record.split_manifest
+        split_m_ver = split_m.manifest_version if split_m else ""
+        split_m_sha = split_m.manifest_hash() if split_m else ""
+        cfg_ident = f"{config.execution_model}:{config.hold_model}:{config.quantity}:{config.lot_size}:{config.slippage_bps_per_side}:{config.cost_schedule.schedule_id if config.cost_schedule else 'NONE'}"
+        config_hash = hashlib.sha256(cfg_ident.encode()).hexdigest()[:16]
+
         trial_context = TrialContext(
             trial_id="TRIAL-" + uuid.uuid4().hex,
             experiment_id=derive_experiment_id(research_task_id),
@@ -121,6 +138,11 @@ class ResearchHarness:
             estimated_llm_cost=estimated_llm_cost,
             mode="PRODUCTION",
             dataset_kind=record.kind.value,
+            dataset_sha256=record.sha256,
+            split_manifest_version=split_m_ver,
+            split_manifest_sha256=split_m_sha,
+            code_version="0.1.0",
+            config_hash=config_hash,
         )
 
         self._ledger.reserve(trial_context, budget)
@@ -151,6 +173,34 @@ class ResearchHarness:
             raise
 
         elapsed = (time.perf_counter() - started) / 60.0
+
+        # Write OOS return artifact before completing the trial in the ledger.
+        artifact_sha256: str | None = None
+        if self._artifact_registry is not None:
+            try:
+                art_path, art_sha256, art_rows, art_start, art_end = write_oos_returns_artifact(
+                    result,
+                    trial_id=trial_context.trial_id,
+                    dataset_version=dataset_version,
+                    artifact_dir=self._artifact_dir,
+                )
+                art_record = self._artifact_registry.record(
+                    trial_id=trial_context.trial_id,
+                    artifact_type=ArtifactType.OOS_RETURNS,
+                    dataset_version=dataset_version,
+                    sha256=art_sha256,
+                    format="parquet",
+                    row_count=art_rows,
+                    start_timestamp=art_start,
+                    end_timestamp=art_end,
+                    artifact_path=art_path,
+                )
+                artifact_sha256 = art_record.sha256
+            except Exception:
+                # Artifact write failure is non-fatal for the trial ledger record,
+                # but we propagate since this breaks population eligibility.
+                raise
+
         self._ledger.complete(
             trial_context.trial_id,
             result={
@@ -160,9 +210,11 @@ class ResearchHarness:
                 "net_pnl": result.net_pnl,
                 "mean_gross_return_bps": result.mean_gross_return_bps,
                 "mean_net_return_bps": result.mean_net_return_bps,
+                **({"artifact_sha256": artifact_sha256} if artifact_sha256 is not None else {}),
             },
             actual_runtime_minutes=elapsed,
             actual_llm_cost=0.0,
             status="COMPLETED",
         )
         return result
+

@@ -4,9 +4,9 @@ Futures-first AI-assisted quantitative research laboratory.
 
 ## Current build stage
 
-**Stage 1: deterministic backtester + synthetic research-integrity harness + split/holdout manager**
+**Stage 1: deterministic backtester + synthetic research-integrity harness + split/holdout manager + research population accounting**
 
-Current verification: **88 tests passing** across synthetic market generation, real gap/wick semantics, cross-session surrogates, directional intraday nulls, recomputable causal positive controls, independent wick preservation, paired edge recovery, one-sided confidence-bound gates, look-ahead canary, checksum-verified Dataset Registry, immutable SplitManifest, purge and embargo boundaries, sealed final holdout security, holdout state machine, and comprehensive adversarial integrity tests.
+Current verification: **129 tests passing** across synthetic market generation, real gap/wick semantics, cross-session surrogates, directional intraday nulls, recomputable causal positive controls, independent wick preservation, paired edge recovery, one-sided confidence-bound gates, look-ahead canary, checksum-verified Dataset Registry, immutable SplitManifest, purge and embargo boundaries, sealed final holdout security, holdout state machine, comprehensive adversarial integrity tests, immutable OOS return Parquet artifacts, SHA-256 byte verification, production population accounting, and EICT-CORR-1 / DSR input preparation.
 
 The synthetic harness is intentionally a research fixture, not a market model. Its purpose is to make the deterministic backtest and research-integrity layers falsifiable before any paid historical market data is purchased or frozen.
 
@@ -24,8 +24,9 @@ The synthetic harness is intentionally a research fixture, not a market model. I
 10. Declarative StrategySpec + typed whitelist compiler; arbitrary agent signal code is excluded from production trials
 11. Checksum-verified Dataset Registry + named split-zone loader; production harness accepts LICENSED data only
 12. Purged/embargoed split manager and sealed holdout (v3.5)
-13. DSR/PBO research-integrity layer
-14. Bounded research agents
+13. Research population accounting + trial return artifacts + EICT-CORR-1 / DSR inputs (v3.6)
+14. DSR/PBO research-integrity layer
+15. Bounded research agents
 
 ## Production Research Architecture
 
@@ -44,8 +45,20 @@ CausalityPreflight (asserts causal signals across cut points)
     ↓
 BacktestEngine (deterministic next-bar-open execution)
     ↓
-TrialLedger (append-only, immutable completed trials with split_zone)
+ArtifactRegistry (persists immutable OOS returns Parquet with SHA-256 digest)
+    ↓
+TrialLedger (append-only, immutable completed trials with split_zone & artifact hash)
+    ↓
+ProductionPopulationQuery + EICT-CORR-1 / DSR Input Preparation
 ```
+
+### Research Population Accounting & OOS Return Artifacts (v3.6)
+
+- **OOS Return Artifacts**: Every completed `PRODUCTION` trial records its complete trade stream into an immutable Parquet file matching `_OOS_RETURNS_SCHEMA`.
+- **Cryptographic Auditability**: Each artifact has a SHA-256 digest verified at load time. Files and database registry records cannot be updated or deleted (guaranteed by SQLite triggers and `ArtifactImmutabilityError`).
+- **Production Population Eligibility**: Only terminal `COMPLETED` production trials within the scope `(dataset_version, research_protocol_version)` with verified artifacts enter the research population. Fixture, failed, non-causal, abandoned, or holdout-rejected trials are permanently barred.
+- **EICT-CORR-1 Inputs**: Aligns common timestamps across pairs, computes Pearson correlation and distance $d = \sqrt{2(1-r)}$, and isolates singleton clusters when common observations fall below 100. Protocol constants are verified and protected against runtime mutation.
+- **DSR Inputs**: Generates return distribution summaries (mean, std, skewness, Fisher kurtosis, observed Sharpe, effective observations) as the input layer for future Deflated Sharpe Ratio calculation.
 
 ### Split Manager & Sealed Holdout (v3.5)
 
