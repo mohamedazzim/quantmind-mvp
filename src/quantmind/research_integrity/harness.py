@@ -8,6 +8,7 @@ import uuid
 from quantmind.backtest.engine import BacktestConfig, BacktestEngine, BacktestResult
 from quantmind.backtest.strategies import NonCausalSignalError, assert_causal_signal
 from quantmind.data import DatasetKind, DatasetRegistry
+from quantmind.data.splits import SplitZone
 from quantmind.strategy import StrategySpec, compile_strategy_spec, normalize_strategy_spec
 from .trial_ledger import ResearchBudget, TrialContext, TrialLedger
 
@@ -27,6 +28,9 @@ def derive_strategy_id(strategy_spec: StrategySpec) -> str:
     return "STRAT-" + hashlib.sha256(normalized.logic_canonical_json().encode()).hexdigest()[:24]
 
 
+from .holdout import HoldoutManager, HoldoutSecurityError
+
+
 class ResearchHarness:
     """Mandatory production entry point for research trials.
 
@@ -41,10 +45,12 @@ class ResearchHarness:
         engine: BacktestEngine,
         ledger: TrialLedger,
         dataset_registry: DatasetRegistry,
+        holdout_manager: HoldoutManager | None = None,
     ) -> None:
         self._engine = engine
         self._ledger = ledger
         self._dataset_registry = dataset_registry
+        self._holdout_manager = holdout_manager or HoldoutManager(engine, ledger, dataset_registry)
 
     def run_trial(
         self,
@@ -53,7 +59,7 @@ class ResearchHarness:
         research_task_id: str,
         strategy_spec: StrategySpec,
         dataset_version: str,
-        split_zone: str,
+        split_zone: SplitZone | str,
         research_protocol_version: str,
         seed: int,
         budget: ResearchBudget,
@@ -64,8 +70,26 @@ class ResearchHarness:
             raise ValueError(
                 "signal_column is test-fixture-only; production research trials require StrategySpec"
             )
+
+        zone_str = split_zone.value if isinstance(split_zone, SplitZone) else str(split_zone).upper()
+        if zone_str == SplitZone.FINAL_HOLDOUT.value:
+            raise ValueError(
+                "FINAL_HOLDOUT zone is sealed; production research trials cannot access holdout data. Use final_evaluate()."
+            )
+
         # Normalize/validate BEFORE reserving a trial budget.
         normalized_spec = normalize_strategy_spec(strategy_spec)
+        strategy_id = derive_strategy_id(normalized_spec)
+
+        if self._holdout_manager.has_candidate_failed(strategy_id, dataset_version, research_protocol_version):
+            raise HoldoutSecurityError(
+                f"Candidate {strategy_id} has failed final holdout for dataset={dataset_version} and cannot be retuned against it."
+            )
+        if self._holdout_manager.is_holdout_burned(dataset_version, research_protocol_version):
+            raise HoldoutSecurityError(
+                f"Holdout for dataset={dataset_version} is BURNED; further research or tuning is prohibited."
+            )
+
         signal_fn = compile_strategy_spec(normalized_spec)
 
         record = self._dataset_registry.get(dataset_version)
@@ -75,15 +99,16 @@ class ResearchHarness:
             )
         data = self._dataset_registry.load_zone(
             dataset_version,
-            split_zone,
+            zone_str,
             allowed_kinds={DatasetKind.LICENSED},
         )
 
         trial_context = TrialContext(
             trial_id="TRIAL-" + uuid.uuid4().hex,
             experiment_id=derive_experiment_id(research_task_id),
-            strategy_id=derive_strategy_id(normalized_spec),
+            strategy_id=strategy_id,
             dataset_version=dataset_version,
+            split_zone=zone_str,
             research_protocol_version=research_protocol_version,
             feature_version=normalized_spec.feature_version,
             parameter_set=dict(normalized_spec.parameters),

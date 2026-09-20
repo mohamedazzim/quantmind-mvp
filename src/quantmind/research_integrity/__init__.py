@@ -6,6 +6,12 @@ from .acquisition_gate import (
 )
 from .trial_ledger import ResearchBudget, TrialBudgetExceeded, TrialContext, TrialLedger
 from .harness import ResearchHarness, ResearchTask, derive_experiment_id, derive_strategy_id
+from .holdout import (
+    FinalEvaluationResult,
+    HoldoutManager,
+    HoldoutSecurityError,
+    HoldoutState,
+)
 
 __all__ = [
     "clopper_pearson_lower",
@@ -20,4 +26,8 @@ __all__ = [
     "ResearchTask",
     "derive_experiment_id",
     "derive_strategy_id",
+    "FinalEvaluationResult",
+    "HoldoutManager",
+    "HoldoutSecurityError",
+    "HoldoutState",
 ]

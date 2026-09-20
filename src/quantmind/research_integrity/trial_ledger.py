@@ -8,7 +8,13 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-_ALLOWED_TERMINAL = {"COMPLETED", "FAILED", "REJECTED_NONCAUSAL", "ABANDONED"}
+_ALLOWED_TERMINAL = {
+    "COMPLETED",
+    "FAILED",
+    "REJECTED_NONCAUSAL",
+    "ABANDONED",
+    "REJECTED_FINAL_HOLDOUT",
+}
 _ALLOWED_STATUS = {"RUNNING", *_ALLOWED_TERMINAL}
 _ALLOWED_MODES = {"PRODUCTION", "FIXTURE"}
 _ALLOWED_DATASET_KINDS = {"SYNTHETIC", "LICENSED"}
@@ -41,6 +47,7 @@ class TrialContext:
     cost_model: str
     slippage_model: str
     estimated_runtime_minutes: float
+    split_zone: str = "RESEARCH"
     estimated_llm_cost: float = 0.0
     strategy_spec_json: str = "{}"
     mode: str = "PRODUCTION"
@@ -81,6 +88,7 @@ class TrialLedger:
                 experiment_id TEXT NOT NULL,
                 strategy_id TEXT NOT NULL,
                 dataset_version TEXT NOT NULL,
+                split_zone TEXT NOT NULL DEFAULT 'RESEARCH',
                 research_protocol_version TEXT NOT NULL,
                 feature_version TEXT NOT NULL,
                 parameter_set_json TEXT NOT NULL,
@@ -99,7 +107,7 @@ class TrialLedger:
                 mode TEXT NOT NULL CHECK (mode IN ('PRODUCTION','FIXTURE')),
                 dataset_kind TEXT NOT NULL CHECK (dataset_kind IN ('SYNTHETIC','LICENSED')),
                 status TEXT NOT NULL CHECK (
-                    status IN ('RUNNING','COMPLETED','FAILED','REJECTED_NONCAUSAL','ABANDONED')
+                    status IN ('RUNNING','COMPLETED','FAILED','REJECTED_NONCAUSAL','ABANDONED','REJECTED_FINAL_HOLDOUT')
                 )
             );
 
@@ -114,7 +122,7 @@ class TrialLedger:
 
             CREATE TRIGGER IF NOT EXISTS trials_running_metadata_immutable
             BEFORE UPDATE OF
-                trial_id, experiment_id, strategy_id, dataset_version, research_protocol_version,
+                trial_id, experiment_id, strategy_id, dataset_version, split_zone, research_protocol_version,
                 feature_version, parameter_set_json, strategy_spec_json, seed, execution_model,
                 cost_model, slippage_model, timestamp_started, estimated_runtime_minutes,
                 estimated_llm_cost, mode, dataset_kind
@@ -215,18 +223,19 @@ class TrialLedger:
             self._connection.execute(
                 """
                 INSERT INTO trials (
-                    trial_id, experiment_id, strategy_id, dataset_version,
+                    trial_id, experiment_id, strategy_id, dataset_version, split_zone,
                     research_protocol_version, feature_version, parameter_set_json, strategy_spec_json,
                     seed, execution_model, cost_model, slippage_model,
                     timestamp_started, estimated_runtime_minutes,
                     estimated_llm_cost, mode, dataset_kind, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'RUNNING')
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'RUNNING')
                 """,
                 (
                     context.trial_id,
                     context.experiment_id,
                     context.strategy_id,
                     context.dataset_version,
+                    context.split_zone,
                     context.research_protocol_version,
                     context.feature_version,
                     json.dumps(context.parameter_set, sort_keys=True, separators=(",", ":")),
@@ -330,3 +339,36 @@ class TrialLedger:
             (dataset_version, protocol, mode, value),
         ).fetchone()
         return int(row["n"])
+
+    def find_trials(
+        self,
+        *,
+        strategy_id: str | None = None,
+        dataset_version: str | None = None,
+        research_protocol_version: str | None = None,
+        split_zone: str | None = None,
+        status: str | None = None,
+        mode: str | None = None,
+    ) -> list[sqlite3.Row]:
+        query = "SELECT * FROM trials WHERE 1=1"
+        params: list[Any] = []
+        if strategy_id is not None:
+            query += " AND strategy_id = ?"
+            params.append(strategy_id)
+        if dataset_version is not None:
+            query += " AND dataset_version = ?"
+            params.append(dataset_version)
+        if research_protocol_version is not None:
+            query += " AND research_protocol_version = ?"
+            params.append(research_protocol_version)
+        if split_zone is not None:
+            query += " AND split_zone = ?"
+            params.append(split_zone)
+        if status is not None:
+            query += " AND status = ?"
+            params.append(status)
+        if mode is not None:
+            query += " AND mode = ?"
+            params.append(mode)
+        query += " ORDER BY timestamp_started ASC"
+        return self._connection.execute(query, tuple(params)).fetchall()

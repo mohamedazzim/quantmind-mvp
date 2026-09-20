@@ -4,9 +4,9 @@ Futures-first AI-assisted quantitative research laboratory.
 
 ## Current build stage
 
-**Stage 1: deterministic backtester + synthetic research-integrity harness**
+**Stage 1: deterministic backtester + synthetic research-integrity harness + split/holdout manager**
 
-Current verification: **51 tests passing** across synthetic market generation, real gap/wick semantics, cross-session surrogates, directional intraday nulls, recomputable causal positive controls, independent wick preservation, paired edge recovery, one-sided confidence-bound gates, and the look-ahead canary.
+Current verification: **88 tests passing** across synthetic market generation, real gap/wick semantics, cross-session surrogates, directional intraday nulls, recomputable causal positive controls, independent wick preservation, paired edge recovery, one-sided confidence-bound gates, look-ahead canary, checksum-verified Dataset Registry, immutable SplitManifest, purge and embargo boundaries, sealed final holdout security, holdout state machine, and comprehensive adversarial integrity tests.
 
 The synthetic harness is intentionally a research fixture, not a market model. Its purpose is to make the deterministic backtest and research-integrity layers falsifiable before any paid historical market data is purchased or frozen.
 
@@ -23,9 +23,39 @@ The synthetic harness is intentionally a research fixture, not a market model. I
 9. ResearchHarness + append-only trial ledger + cumulative research budget
 10. Declarative StrategySpec + typed whitelist compiler; arbitrary agent signal code is excluded from production trials
 11. Checksum-verified Dataset Registry + named split-zone loader; production harness accepts LICENSED data only
-12. Purged/embargoed split manager and sealed holdout
+12. Purged/embargoed split manager and sealed holdout (v3.5)
 13. DSR/PBO research-integrity layer
 14. Bounded research agents
+
+## Production Research Architecture
+
+The production research path is strictly sequential and callers never supply arbitrary DataFrames or file paths:
+
+```text
+DatasetRegistry (checksum-verified, immutable)
+    ↓
+SplitManager / SplitManifest (purged & embargoed boundaries)
+    ↓
+ResearchHarness (enforces LICENSED dataset, non-holdout split zone, budget)
+    ↓
+StrategyCompiler (whitelist compilation of declarative StrategySpec)
+    ↓
+CausalityPreflight (asserts causal signals across cut points)
+    ↓
+BacktestEngine (deterministic next-bar-open execution)
+    ↓
+TrialLedger (append-only, immutable completed trials with split_zone)
+```
+
+### Split Manager & Sealed Holdout (v3.5)
+
+- **`SplitManifest`**: Defines `RESEARCH`, `VALIDATION`, `FINAL_HOLDOUT`, and `FORWARD_PAPER` zones with versioned, immutable boundaries.
+- **Purge & Embargo**: Purge windows are derived from temporal dependencies (`feature_lookback + prediction_horizon + holding_period + forward_dependency`), preventing overlapping label windows. Embargo buffers prevent serial correlation leakage.
+- **High-Performance Zone Loading**: Extracted via numpy boolean masks (no `.iloc` loops) with in-memory caching and SHA-256 verification.
+- **Sealed `FINAL_HOLDOUT`**: Standard research APIs and agents (`load_zone`, `ResearchHarness.run_trial`) are prohibited from requesting holdout data.
+- **Dedicated `final_evaluate()` Gateway**: Candidates can only evaluate holdout if they have passed earlier required gates (completed `RESEARCH` or `VALIDATION` trial).
+- **Holdout State Machine**: Tracks `UNTOUCHED`, `EVALUATED`, `PASSED`, `FAILED`, and `BURNED`. Failed candidates are permanently blocked from retuning or re-evaluating against that holdout dataset. Burned holdouts cannot be evaluated or tuned against.
+- **Trust Boundary**: The production boundary is enforced through `ResearchHarness` + `DatasetRegistry` + `StrategyCompiler` + `TrialLedger`. In-process Python trust limitations (e.g. direct private method invocation or SQLite file permissions) will be hardened in future releases via PostgreSQL role-level security.
 
 ## Run tests
 

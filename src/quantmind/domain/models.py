@@ -88,3 +88,4 @@ class Trial:
     timestamp_completed: datetime
     result: Mapping[str, Any]
     status: str
+    split_zone: str = "RESEARCH"
