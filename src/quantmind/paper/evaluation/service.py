@@ -91,6 +91,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Sequence
 
+from quantmind.data.registry import DatasetKind, DatasetRegistry
 from quantmind.paper.evaluation.detector import DegradationDetector
 from quantmind.paper.evaluation.ledger import EvaluationLedger
 from quantmind.paper.evaluation.metrics import (
@@ -109,6 +110,7 @@ from quantmind.paper.evaluation.models import (
     MonitoringConfig,
     MonitoringSnapshot,
     PaperEvaluationBaseline,
+    PaperEvaluationRegime,
 )
 from quantmind.paper.ledger import PaperLedger
 from quantmind.paper.models import (
@@ -145,10 +147,12 @@ class EvaluationResult:
 
     Contains the persisted MonitoringSnapshot and any detected DegradationEvents.
     Both fields are authoritative evidence — already persisted in EvaluationLedger.
+    Also binds the authoritative PaperEvaluationRegime for this evaluation.
     """
 
     snapshot: MonitoringSnapshot
     degradation_events: tuple[DegradationEvent, ...]
+    regime: PaperEvaluationRegime | None = None
 
     @property
     def has_degradation(self) -> bool:
@@ -198,6 +202,7 @@ class PaperEvaluationService:
         paper_ledger: PaperLedger,
         evaluation_ledger: EvaluationLedger,
         observed_replay_report: ReplayReport | None = None,
+        dataset_registry: DatasetRegistry | None = None,
     ) -> EvaluationResult:
         """Evaluate a single temporal window of paper trading evidence.
 
@@ -213,6 +218,8 @@ class PaperEvaluationService:
             observed_replay_report: Optional ReplayReport for the observed
                 forward paper evaluation window. Semantically separate from
                 the authoritative baseline report.
+            dataset_registry: Optional authoritative DatasetRegistry to verify
+                forward dataset registration, checksum, and licensing.
 
         Returns:
             EvaluationResult with persisted snapshot and degradation events.
@@ -233,6 +240,7 @@ class PaperEvaluationService:
             paper_ledger=paper_ledger,
             evaluation_ledger=evaluation_ledger,
             observed_replay_report=observed_replay_report,
+            dataset_registry=dataset_registry,
         )
 
         # ------------------------------------------------------------------
@@ -376,9 +384,22 @@ class PaperEvaluationService:
             persisted = evaluation_ledger.record_degradation_event(event)
             persisted_events.append(persisted)
 
+        regime = PaperEvaluationRegime.create(
+            strategy_id=strategy_id,
+            qualification_hash=qualification_hash,
+            baseline_replay_report_hash=baseline.baseline_replay_report_hash,
+            forward_dataset_version=obs_dataset_version,
+            forward_dataset_sha256=obs_dataset_sha256,
+            execution_policy=baseline.baseline_execution_policy,
+            cost_schedule_hash=baseline.baseline_cost_schedule_hash,
+            risk_config_hash=baseline.baseline_risk_config_hash,
+            monitoring_protocol_version=monitoring_config.protocol_version,
+        )
+
         return EvaluationResult(
             snapshot=snapshot,
             degradation_events=tuple(persisted_events),
+            regime=regime,
         )
 
     # -----------------------------------------------------------------------
@@ -397,6 +418,7 @@ class PaperEvaluationService:
         paper_ledger: PaperLedger,
         evaluation_ledger: EvaluationLedger,
         observed_replay_report: ReplayReport | None,
+        dataset_registry: DatasetRegistry | None = None,
     ) -> None:
         """Fail-closed validation of all caller-supplied inputs."""
         if not strategy_id:
@@ -428,6 +450,10 @@ class PaperEvaluationService:
         if type(evaluation_ledger) is not EvaluationLedger:
             raise PaperEvaluationServiceError(
                 f"evaluation_ledger must be EvaluationLedger, got {type(evaluation_ledger)}"
+            )
+        if dataset_registry is not None and type(dataset_registry) is not DatasetRegistry:
+            raise PaperEvaluationServiceError(
+                f"dataset_registry must be DatasetRegistry, got {type(dataset_registry)}"
             )
         if observed_replay_report is not None and type(observed_replay_report) is not ReplayReport:
             raise PaperEvaluationServiceError(
@@ -477,15 +503,35 @@ class PaperEvaluationService:
                     f"observed_replay_report.split_zone must be 'FORWARD_PAPER', "
                     f"got '{obs.split_zone}'"
                 )
-            if obs.dataset_version != qualification_record.dataset_version:
+            if not obs.dataset_version:
+                raise PaperEvaluationServiceError("observed_replay_report.dataset_version cannot be empty")
+            if not obs.dataset_sha256 or len(obs.dataset_sha256) != 64:
+                raise PaperEvaluationServiceError("observed_replay_report.dataset_sha256 must be a valid 64-character hex digest")
+            if "synthetic" in obs.dataset_version.lower():
                 raise PaperEvaluationServiceError(
-                    f"observed_replay_report.dataset_version mismatch: "
-                    f"'{obs.dataset_version}' != '{qualification_record.dataset_version}'"
+                    f"Synthetic dataset '{obs.dataset_version}' is barred from paper evaluation"
                 )
-            if obs.dataset_sha256 != qualification_record.dataset_sha256:
-                raise PaperEvaluationServiceError(
-                    "observed_replay_report.dataset_sha256 mismatch with qualification record"
-                )
+            if dataset_registry is not None:
+                try:
+                    reg_entry = dataset_registry.get(obs.dataset_version)
+                except Exception as exc:
+                    raise PaperEvaluationServiceError(
+                        f"Observed dataset '{obs.dataset_version}' is not registered in DatasetRegistry: {exc}"
+                    ) from exc
+                if reg_entry is None:
+                    raise PaperEvaluationServiceError(
+                        f"Observed dataset '{obs.dataset_version}' is not registered in DatasetRegistry"
+                    )
+                if reg_entry.sha256 != obs.dataset_sha256:
+                    raise PaperEvaluationServiceError(
+                        f"Observed dataset sha256 '{obs.dataset_sha256}' does not match "
+                        f"DatasetRegistry entry sha256 '{reg_entry.sha256}'"
+                    )
+                if reg_entry.kind is not DatasetKind.LICENSED:
+                    raise PaperEvaluationServiceError(
+                        f"Dataset '{obs.dataset_version}' is kind '{reg_entry.kind.value}'; "
+                        "synthetic datasets are prohibited in paper evaluation"
+                    )
 
     # -----------------------------------------------------------------------
     # Phase 2: Load Authoritative Baseline

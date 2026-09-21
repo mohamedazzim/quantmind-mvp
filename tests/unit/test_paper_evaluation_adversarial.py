@@ -542,52 +542,228 @@ class TestCrossSessionAttack:
 # 4. OBSERVED REPORT AUTHENTICITY
 # ===========================================================================
 
-class TestObservedReportAuthenticity:
-    """Verifies that observed reports cannot be forged, mismatched, or out of window."""
+class TestDatasetLineageAndConfigurationCompatibility:
+    """M5.2 Adversarial Matrix: Dataset lineage, configuration compatibility, and regime identity."""
 
-    def test_wrong_dataset_version_fails_closed(self):
+    # -----------------------------------------------------------------------
+    # Dataset Lineage Matrix (Tests 1 - 7)
+    # -----------------------------------------------------------------------
+
+    def test_1_qualification_dataset_equals_observed_dataset(self):
+        """Case 1: qualification dataset == observed dataset -> Valid evaluation."""
         paper, eval_ledger, qual, _, _ = _setup()
         obs = _make_observed_report(qual)
-        bad_obs = dataclasses.replace(obs, dataset_version="wrong_v2", report_hash="")
-        bad_obs = dataclasses.replace(bad_obs, report_hash=bad_obs.compute_report_hash())
-        with pytest.raises(PaperEvaluationServiceError, match="dataset_version"):
-            PaperEvaluationService().evaluate_window(
-                strategy_id=STRATEGY_ID,
-                qualification_hash=qual.record_hash,
-                qualification_record=qual,
-                window_start_ts=T0,
-                window_end_ts=T1,
-                monitoring_config=_make_config(),
-                paper_ledger=paper,
-                evaluation_ledger=eval_ledger,
-                observed_replay_report=bad_obs,
-            )
-
-    def test_wrong_dataset_sha256_fails_closed(self):
-        paper, eval_ledger, qual, _, _ = _setup()
-        obs = _make_observed_report(qual)
-        bad_obs = dataclasses.replace(obs, dataset_sha256="ff" * 32, report_hash="")
-        bad_obs = dataclasses.replace(bad_obs, report_hash=bad_obs.compute_report_hash())
-        with pytest.raises(PaperEvaluationServiceError, match="dataset_sha256"):
-            PaperEvaluationService().evaluate_window(
-                strategy_id=STRATEGY_ID,
-                qualification_hash=qual.record_hash,
-                qualification_record=qual,
-                window_start_ts=T0,
-                window_end_ts=T1,
-                monitoring_config=_make_config(),
-                paper_ledger=paper,
-                evaluation_ledger=eval_ledger,
-                observed_replay_report=bad_obs,
-            )
-
-    def test_older_disjoint_report_fails_closed(self):
-        paper, eval_ledger, qual, _, _ = _setup()
-        # Report from 2023 for 2024 window
-        obs = _make_observed_report(
-            qual, session_start="2023-01-01T09:15:00", session_end="2023-01-01T15:30:00"
+        res = PaperEvaluationService().evaluate_window(
+            strategy_id=STRATEGY_ID,
+            qualification_hash=qual.record_hash,
+            qualification_record=qual,
+            window_start_ts=T0,
+            window_end_ts=T1,
+            monitoring_config=_make_config(),
+            paper_ledger=paper,
+            evaluation_ledger=eval_ledger,
+            observed_replay_report=obs,
         )
-        with pytest.raises(PaperEvaluationServiceError, match="older report / wrong window"):
+        assert res.snapshot.dataset_version == qual.dataset_version
+        assert res.snapshot.dataset_sha256 == qual.dataset_sha256
+        assert res.regime is not None
+        assert res.regime.forward_dataset_version == qual.dataset_version
+
+    def test_2_later_forward_paper_dataset_valid_lineage(self):
+        """Case 2: qualification dataset != observed FORWARD_PAPER dataset but valid lineage -> Valid."""
+        paper, eval_ledger, qual, _, _ = _setup()
+        forward_version = "nifty_2024_forward_v1"
+        forward_sha = "ee" * 32
+        obs = _make_observed_report(qual)
+        forward_obs = dataclasses.replace(
+            obs,
+            dataset_version=forward_version,
+            dataset_sha256=forward_sha,
+            report_hash="",
+        )
+        forward_obs = dataclasses.replace(forward_obs, report_hash=forward_obs.compute_report_hash())
+
+        res = PaperEvaluationService().evaluate_window(
+            strategy_id=STRATEGY_ID,
+            qualification_hash=qual.record_hash,
+            qualification_record=qual,
+            window_start_ts=T0,
+            window_end_ts=T1,
+            monitoring_config=_make_config(),
+            paper_ledger=paper,
+            evaluation_ledger=eval_ledger,
+            observed_replay_report=forward_obs,
+        )
+        assert res.snapshot.dataset_version == forward_version
+        assert res.snapshot.dataset_sha256 == forward_sha
+        assert res.regime is not None
+        assert res.regime.forward_dataset_version == forward_version
+        assert res.regime.forward_dataset_sha256 == forward_sha
+
+    def test_3_wrong_dataset_checksum_against_registry_fails_closed(self):
+        """Case 3: Wrong dataset checksum against registry -> Fails closed."""
+        from quantmind.data.registry import DatasetKind, DatasetRegistry
+
+        paper, eval_ledger, qual, _, _ = _setup()
+        reg = DatasetRegistry(":memory:")
+        reg._connection.execute(
+            "INSERT INTO datasets (version, kind, path, format, sha256, timestamp_column) VALUES (?, ?, ?, ?, ?, ?)",
+            ("nifty_2024_forward_v1", DatasetKind.LICENSED.value, "dummy.csv", "csv", "11" * 32, "timestamp"),
+        )
+        obs = _make_observed_report(qual)
+        bad_obs = dataclasses.replace(
+            obs,
+            dataset_version="nifty_2024_forward_v1",
+            dataset_sha256="22" * 32,  # Checksum mismatch
+            report_hash="",
+        )
+        bad_obs = dataclasses.replace(bad_obs, report_hash=bad_obs.compute_report_hash())
+
+        with pytest.raises(PaperEvaluationServiceError, match="sha256"):
+            PaperEvaluationService().evaluate_window(
+                strategy_id=STRATEGY_ID,
+                qualification_hash=qual.record_hash,
+                qualification_record=qual,
+                window_start_ts=T0,
+                window_end_ts=T1,
+                monitoring_config=_make_config(),
+                paper_ledger=paper,
+                evaluation_ledger=eval_ledger,
+                observed_replay_report=bad_obs,
+                dataset_registry=reg,
+            )
+
+    def test_4_unregistered_dataset_fails_closed_against_registry(self):
+        """Case 4: Unregistered dataset when registry is provided -> Fails closed."""
+        from quantmind.data.registry import DatasetRegistry
+
+        paper, eval_ledger, qual, _, _ = _setup()
+        reg = DatasetRegistry(":memory:")  # Empty registry
+        obs = _make_observed_report(qual)
+        unreg_obs = dataclasses.replace(
+            obs,
+            dataset_version="unregistered_dataset_2025",
+            report_hash="",
+        )
+        unreg_obs = dataclasses.replace(unreg_obs, report_hash=unreg_obs.compute_report_hash())
+
+        with pytest.raises(PaperEvaluationServiceError, match="not registered in DatasetRegistry"):
+            PaperEvaluationService().evaluate_window(
+                strategy_id=STRATEGY_ID,
+                qualification_hash=qual.record_hash,
+                qualification_record=qual,
+                window_start_ts=T0,
+                window_end_ts=T1,
+                monitoring_config=_make_config(),
+                paper_ledger=paper,
+                evaluation_ledger=eval_ledger,
+                observed_replay_report=unreg_obs,
+                dataset_registry=reg,
+            )
+
+    def test_5_synthetic_dataset_fails_closed(self):
+        """Case 5: Synthetic dataset -> Fails closed."""
+        from quantmind.data.registry import DatasetKind, DatasetRegistry
+
+        paper, eval_ledger, qual, _, _ = _setup()
+        reg = DatasetRegistry(":memory:")
+        reg._connection.execute(
+            "INSERT INTO datasets (version, kind, path, format, sha256, timestamp_column) VALUES (?, ?, ?, ?, ?, ?)",
+            ("synth_nifty_2024", DatasetKind.SYNTHETIC.value, "synth.csv", "csv", "33" * 32, "timestamp"),
+        )
+        obs = _make_observed_report(qual)
+        synth_obs = dataclasses.replace(
+            obs,
+            dataset_version="synth_nifty_2024",
+            dataset_sha256="33" * 32,
+            report_hash="",
+        )
+        synth_obs = dataclasses.replace(synth_obs, report_hash=synth_obs.compute_report_hash())
+
+        with pytest.raises(PaperEvaluationServiceError, match="synthetic"):
+            PaperEvaluationService().evaluate_window(
+                strategy_id=STRATEGY_ID,
+                qualification_hash=qual.record_hash,
+                qualification_record=qual,
+                window_start_ts=T0,
+                window_end_ts=T1,
+                monitoring_config=_make_config(),
+                paper_ledger=paper,
+                evaluation_ledger=eval_ledger,
+                observed_replay_report=synth_obs,
+                dataset_registry=reg,
+            )
+
+    def test_6_final_holdout_dataset_fails_closed(self):
+        """Case 6: FINAL_HOLDOUT partition -> Unconditionally prohibited."""
+        paper, eval_ledger, qual, _, _ = _setup()
+        obs = _make_observed_report(qual)
+        holdout_obs = dataclasses.replace(obs, split_zone="FINAL_HOLDOUT", report_hash="")
+        holdout_obs = dataclasses.replace(holdout_obs, report_hash=holdout_obs.compute_report_hash())
+
+        with pytest.raises(PaperEvaluationServiceError, match="FORWARD_PAPER"):
+            PaperEvaluationService().evaluate_window(
+                strategy_id=STRATEGY_ID,
+                qualification_hash=qual.record_hash,
+                qualification_record=qual,
+                window_start_ts=T0,
+                window_end_ts=T1,
+                monitoring_config=_make_config(),
+                paper_ledger=paper,
+                evaluation_ledger=eval_ledger,
+                observed_replay_report=holdout_obs,
+            )
+
+    def test_7_unrelated_split_zone_fails_closed(self):
+        """Case 7: Dataset from RESEARCH / VALIDATION zone -> Fails closed."""
+        paper, eval_ledger, qual, _, _ = _setup()
+        obs = _make_observed_report(qual)
+        research_obs = dataclasses.replace(obs, split_zone="RESEARCH", report_hash="")
+        research_obs = dataclasses.replace(research_obs, report_hash=research_obs.compute_report_hash())
+
+        with pytest.raises(PaperEvaluationServiceError, match="FORWARD_PAPER"):
+            PaperEvaluationService().evaluate_window(
+                strategy_id=STRATEGY_ID,
+                qualification_hash=qual.record_hash,
+                qualification_record=qual,
+                window_start_ts=T0,
+                window_end_ts=T1,
+                monitoring_config=_make_config(),
+                paper_ledger=paper,
+                evaluation_ledger=eval_ledger,
+                observed_replay_report=research_obs,
+            )
+
+    # -----------------------------------------------------------------------
+    # Configuration Compatibility Matrix (Tests 8 - 13)
+    # -----------------------------------------------------------------------
+
+    def test_8_same_execution_policy_and_config(self):
+        """Case 8: Identical execution policy, cost schedule, and risk config -> Valid."""
+        paper, eval_ledger, qual, _, _ = _setup()
+        obs = _make_observed_report(qual)
+        res = PaperEvaluationService().evaluate_window(
+            strategy_id=STRATEGY_ID,
+            qualification_hash=qual.record_hash,
+            qualification_record=qual,
+            window_start_ts=T0,
+            window_end_ts=T1,
+            monitoring_config=_make_config(),
+            paper_ledger=paper,
+            evaluation_ledger=eval_ledger,
+            observed_replay_report=obs,
+        )
+        assert res.regime is not None
+        assert res.regime.execution_policy == obs.execution_policy
+        assert res.regime.cost_schedule_hash == obs.cost_schedule_hash
+        assert res.regime.risk_config_hash == obs.risk_config_hash
+        assert res.regime.verify_digest()
+
+    def test_9_different_execution_policy_fails_closed(self):
+        """Case 9: Execution policy differs from baseline -> Fails closed (regime break)."""
+        paper, eval_ledger, qual, _, _ = _setup()
+        obs = _make_observed_report(qual, execution_policy="vwap_v1")
+        with pytest.raises(PaperEvaluationServiceError, match="execution_policy mismatch"):
             PaperEvaluationService().evaluate_window(
                 strategy_id=STRATEGY_ID,
                 qualification_hash=qual.record_hash,
@@ -600,10 +776,106 @@ class TestObservedReportAuthenticity:
                 observed_replay_report=obs,
             )
 
-    def test_conflicting_execution_policy_with_baseline_fails_closed(self):
+    def test_10_different_cost_schedule_fails_closed(self):
+        """Case 10: Cost schedule differs from baseline -> Fails closed (regime break)."""
         paper, eval_ledger, qual, _, _ = _setup()
-        obs = _make_observed_report(qual, execution_policy="custom_policy_v2")
+        obs = _make_observed_report(qual, cost_schedule_hash="different_csh" + "0" * 51)
+        with pytest.raises(PaperEvaluationServiceError, match="cost_schedule_hash mismatch"):
+            PaperEvaluationService().evaluate_window(
+                strategy_id=STRATEGY_ID,
+                qualification_hash=qual.record_hash,
+                qualification_record=qual,
+                window_start_ts=T0,
+                window_end_ts=T1,
+                monitoring_config=_make_config(),
+                paper_ledger=paper,
+                evaluation_ledger=eval_ledger,
+                observed_replay_report=obs,
+            )
+
+    def test_11_different_risk_configuration_fails_closed(self):
+        """Case 11: Risk configuration differs from baseline -> Fails closed (regime break)."""
+        paper, eval_ledger, qual, _, _ = _setup()
+        obs = _make_observed_report(qual, risk_config_hash="different_rch" + "0" * 51)
+        with pytest.raises(PaperEvaluationServiceError, match="risk_config_hash mismatch"):
+            PaperEvaluationService().evaluate_window(
+                strategy_id=STRATEGY_ID,
+                qualification_hash=qual.record_hash,
+                qualification_record=qual,
+                window_start_ts=T0,
+                window_end_ts=T1,
+                monitoring_config=_make_config(),
+                paper_ledger=paper,
+                evaluation_ledger=eval_ledger,
+                observed_replay_report=obs,
+            )
+
+    def test_12_modified_config_with_unchanged_labels_fails_closed(self):
+        """Case 12: Cost schedule parameters altered while keeping schedule_id -> Fails closed via hash mismatch."""
+        paper, eval_ledger, qual, _, _ = _setup()
+        # Even if label/id is unchanged, hash changes when schedule parameters differ
+        tampered_csh = "tampered_csh_" + "9" * 51
+        obs = _make_observed_report(qual, cost_schedule_hash=tampered_csh)
+        with pytest.raises(PaperEvaluationServiceError, match="cost_schedule_hash mismatch"):
+            PaperEvaluationService().evaluate_window(
+                strategy_id=STRATEGY_ID,
+                qualification_hash=qual.record_hash,
+                qualification_record=qual,
+                window_start_ts=T0,
+                window_end_ts=T1,
+                monitoring_config=_make_config(),
+                paper_ledger=paper,
+                evaluation_ledger=eval_ledger,
+                observed_replay_report=obs,
+            )
+
+    def test_13_regime_break_after_evaluation_begins(self):
+        """Case 13: Configuration change after initial evaluation window -> Fails closed against established baseline."""
+        paper, eval_ledger, qual, _, _ = _setup()
+        svc = PaperEvaluationService()
+        valid_obs = _make_observed_report(qual)
+
+        # Window 1 evaluates cleanly under established baseline regime
+        r1 = svc.evaluate_window(
+            strategy_id=STRATEGY_ID,
+            qualification_hash=qual.record_hash,
+            qualification_record=qual,
+            window_start_ts=T0,
+            window_end_ts=T1,
+            monitoring_config=_make_config(),
+            paper_ledger=paper,
+            evaluation_ledger=eval_ledger,
+            observed_replay_report=valid_obs,
+        )
+        assert r1.regime is not None
+
+        # Window 2 attempts to switch execution policy while bound to same baseline
+        mutated_obs = _make_observed_report(
+            qual,
+            session_start="2024-01-11T09:15:00",
+            session_end="2024-01-11T15:30:00",
+            execution_policy="mutated_policy_v2",
+        )
         with pytest.raises(PaperEvaluationServiceError, match="execution_policy mismatch"):
+            svc.evaluate_window(
+                strategy_id=STRATEGY_ID,
+                qualification_hash=qual.record_hash,
+                qualification_record=qual,
+                window_start_ts="2024-01-11T09:15:00",
+                window_end_ts="2024-01-11T15:30:00",
+                monitoring_config=_make_config(),
+                paper_ledger=paper,
+                evaluation_ledger=eval_ledger,
+                observed_replay_report=mutated_obs,
+            )
+
+    def test_older_disjoint_report_fails_closed(self):
+        """Disjoint older report with all sessions predating window_start_ts fails closed."""
+        paper, eval_ledger, qual, _, _ = _setup()
+        obs = _make_observed_report(
+            qual, session_start="2023-01-01T09:15:00", session_end="2023-01-01T15:30:00"
+        )
+        with pytest.raises(PaperEvaluationServiceError, match="older report / wrong window"):
             PaperEvaluationService().evaluate_window(
                 strategy_id=STRATEGY_ID,
                 qualification_hash=qual.record_hash,

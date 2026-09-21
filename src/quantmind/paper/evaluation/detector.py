@@ -522,18 +522,21 @@ def _verify_input_provenance(
             raise MonitoringProvenanceError(
                 f"Baseline binding qualification_hash mismatch: {baseline.qualification_hash} != {snapshot.qualification_hash}"
             )
-        if baseline.baseline_dataset_version != snapshot.dataset_version:
-            raise MonitoringProvenanceError(
-                f"Baseline binding dataset_version mismatch: {baseline.baseline_dataset_version} != {snapshot.dataset_version}"
-            )
-        if baseline.baseline_dataset_sha256 != snapshot.dataset_sha256:
-            raise MonitoringProvenanceError(
-                f"Baseline binding dataset_sha256 mismatch: {baseline.baseline_dataset_sha256} != {snapshot.dataset_sha256}"
-            )
-        if baseline.baseline_split_zone != snapshot.split_zone:
-            raise MonitoringProvenanceError(
-                f"Baseline binding split_zone mismatch: {baseline.baseline_split_zone} != {snapshot.split_zone}"
-            )
+        if observed_replay_report is None:
+            if baseline.baseline_dataset_version != snapshot.dataset_version:
+                raise MonitoringProvenanceError(
+                    f"Baseline binding dataset_version mismatch: {baseline.baseline_dataset_version} != {snapshot.dataset_version}"
+                )
+            if baseline.baseline_dataset_sha256 != snapshot.dataset_sha256:
+                raise MonitoringProvenanceError(
+                    f"Baseline binding dataset_sha256 mismatch: {baseline.baseline_dataset_sha256} != {snapshot.dataset_sha256}"
+                )
+        else:
+            if baseline.baseline_dataset_version == snapshot.dataset_version:
+                if baseline.baseline_dataset_sha256 != snapshot.dataset_sha256:
+                    raise MonitoringProvenanceError(
+                        f"Baseline binding dataset_sha256 mismatch: {baseline.baseline_dataset_sha256} != {snapshot.dataset_sha256}"
+                    )
         if baseline_replay_report is not None:
             if baseline_replay_report.report_hash != baseline.baseline_replay_report_hash:
                 raise MonitoringProvenanceError(

@@ -49,6 +49,7 @@ from .models import (
     MonitoringProvenanceError,
     MonitoringSnapshot,
     PaperEvaluationBaseline,
+    PaperEvaluationRegime,
     PaperEvaluationTransition,
     ResearchFeedbackRecord,
 )
@@ -73,6 +74,7 @@ __all__ = [
     "MonitoringProvenanceError",
     "MonitoringSnapshot",
     "PaperEvaluationBaseline",
+    "PaperEvaluationRegime",
     "PaperEvaluationService",
     "PaperEvaluationServiceError",
     "PaperEvaluationTransition",

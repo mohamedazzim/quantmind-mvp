@@ -846,3 +846,94 @@ class PaperEvaluationBaseline:
             baseline_risk_config_hash=report.risk_config_hash,
             created_at=created_at or report.created_at,
         )
+
+
+# ---------------------------------------------------------------------------
+# 6. PaperEvaluationRegime
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PaperEvaluationRegime:
+    """Immutable identity defining the execution, risk, and dataset regime for evaluation.
+
+    Binds the strategy and qualification to the active forward dataset and execution
+    parameters. A change in execution policy, cost schedule, or risk configuration
+    represents a regime break requiring a distinct regime identity.
+    """
+
+    strategy_id: str
+    qualification_hash: str
+    baseline_replay_report_hash: str
+    forward_dataset_version: str
+    forward_dataset_sha256: str
+    execution_policy: str
+    cost_schedule_hash: str
+    risk_config_hash: str
+    monitoring_protocol_version: str
+    regime_hash: str
+
+    def canonical_dict(self) -> dict[str, Any]:
+        return {
+            "baseline_replay_report_hash": str(self.baseline_replay_report_hash),
+            "cost_schedule_hash": str(self.cost_schedule_hash),
+            "execution_policy": str(self.execution_policy),
+            "forward_dataset_sha256": str(self.forward_dataset_sha256),
+            "forward_dataset_version": str(self.forward_dataset_version),
+            "monitoring_protocol_version": str(self.monitoring_protocol_version),
+            "qualification_hash": str(self.qualification_hash),
+            "risk_config_hash": str(self.risk_config_hash),
+            "strategy_id": str(self.strategy_id),
+        }
+
+    def canonical_json(self) -> str:
+        return json.dumps(self.canonical_dict(), sort_keys=True, separators=(",", ":"))
+
+    def compute_regime_hash(self) -> str:
+        return hashlib.sha256(self.canonical_json().encode("utf-8")).hexdigest()
+
+    def verify_digest(self) -> bool:
+        return self.regime_hash == self.compute_regime_hash()
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        strategy_id: str,
+        qualification_hash: str,
+        baseline_replay_report_hash: str,
+        forward_dataset_version: str,
+        forward_dataset_sha256: str,
+        execution_policy: str,
+        cost_schedule_hash: str,
+        risk_config_hash: str,
+        monitoring_protocol_version: str,
+    ) -> PaperEvaluationRegime:
+        canonical_bytes = json.dumps(
+            {
+                "baseline_replay_report_hash": str(baseline_replay_report_hash),
+                "cost_schedule_hash": str(cost_schedule_hash),
+                "execution_policy": str(execution_policy),
+                "forward_dataset_sha256": str(forward_dataset_sha256),
+                "forward_dataset_version": str(forward_dataset_version),
+                "monitoring_protocol_version": str(monitoring_protocol_version),
+                "qualification_hash": str(qualification_hash),
+                "risk_config_hash": str(risk_config_hash),
+                "strategy_id": str(strategy_id),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        digest = hashlib.sha256(canonical_bytes).hexdigest()
+        return cls(
+            strategy_id=strategy_id,
+            qualification_hash=qualification_hash,
+            baseline_replay_report_hash=baseline_replay_report_hash,
+            forward_dataset_version=forward_dataset_version,
+            forward_dataset_sha256=forward_dataset_sha256,
+            execution_policy=execution_policy,
+            cost_schedule_hash=cost_schedule_hash,
+            risk_config_hash=risk_config_hash,
+            monitoring_protocol_version=monitoring_protocol_version,
+            regime_hash=digest,
+        )
