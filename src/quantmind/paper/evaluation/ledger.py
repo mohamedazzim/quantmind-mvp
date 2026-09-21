@@ -925,6 +925,14 @@ class EvaluationLedger:
         rows = self._connection.execute(query, params).fetchall()
         return [self._row_to_transition(r) for r in rows]
 
+    def get_transition(self, transition_hash: str) -> PaperEvaluationTransition | None:
+        """Retrieve a PaperEvaluationTransition by its cryptographic transition_hash, or None."""
+        row = self._connection.execute(
+            "SELECT * FROM paper_evaluation_transitions WHERE transition_hash = ?",
+            (transition_hash,),
+        ).fetchone()
+        return self._row_to_transition(row) if row is not None else None
+
     def get_latest_transition(self, strategy_id: str) -> PaperEvaluationTransition | None:
         """Return the most recent PaperEvaluationTransition for strategy_id by timestamp DESC, rowid DESC."""
         row = self._connection.execute(

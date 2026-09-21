@@ -104,6 +104,12 @@ class PaperGovernanceService:
                 f"Causal ordering violation: transition timestamp '{trans_ts}' is earlier than updated_at '{record.updated_at}'"
             )
 
+        if baseline.created_at > trans_ts:
+            raise GovernanceCausalError(
+                f"Baseline created_at '{baseline.created_at}' is in the future relative to "
+                f"governance transition timestamp '{trans_ts}'"
+            )
+
         transition = PaperEvaluationTransition.create(
             strategy_id=strategy_id,
             old_state=StrategyLifecycleState.PAPER_ELIGIBLE.value,
@@ -141,7 +147,8 @@ class PaperGovernanceService:
         - Valid, digest-verified DegradationEvent.
         - Strategy in PAPER_ACTIVE (or PAPER_ELIGIBLE) state.
         - Event strategy_id and qualification_hash match the registry.
-        - Causal ordering: degradation event timestamp must not be in the future relative to transition timestamp.
+        - Complete cryptographic provenance: DegradationEvent -> MonitoringSnapshot -> PaperEvaluationRegime.
+        - Causal ordering: degradation event and snapshot timestamps must not be in the future.
         """
         if type(degradation_event) is not DegradationEvent:
             raise TypeError(
@@ -181,9 +188,48 @@ class PaperGovernanceService:
                 f"Causal ordering violation: transition timestamp '{trans_ts}' is earlier than updated_at '{record.updated_at}'"
             )
 
-        # Lookup snapshot in ledger to retrieve regime_hash if available
+        # Full provenance verification: DegradationEvent -> MonitoringSnapshot -> PaperEvaluationRegime
         snapshot = self._ledger.get_snapshot(degradation_event.snapshot_hash)
-        regime_h = snapshot.regime_hash if snapshot is not None else ""
+        if snapshot is None:
+            raise GovernanceIntegrityError(
+                f"DegradationEvent references non-existent snapshot '{degradation_event.snapshot_hash}' in EvaluationLedger"
+            )
+        if not snapshot.verify_digest():
+            raise GovernanceIntegrityError(
+                f"Snapshot '{degradation_event.snapshot_hash}' failed cryptographic digest verification"
+            )
+        if snapshot.strategy_id != strategy_id:
+            raise GovernanceIntegrityError(
+                f"Snapshot strategy_id '{snapshot.strategy_id}' does not match strategy '{strategy_id}'"
+            )
+        if snapshot.qualification_hash != record.qualification_hash:
+            raise GovernanceIntegrityError(
+                f"Snapshot qualification_hash '{snapshot.qualification_hash}' does not match "
+                f"registered qualification_hash '{record.qualification_hash}'"
+            )
+        if snapshot.created_at > trans_ts:
+            raise GovernanceCausalError(
+                f"Snapshot created_at '{snapshot.created_at}' is in the future relative to "
+                f"governance transition timestamp '{trans_ts}'"
+            )
+
+        regime_h = ""
+        if snapshot.regime_hash:
+            regime = self._ledger.get_regime(snapshot.regime_hash)
+            if regime is None:
+                raise GovernanceIntegrityError(
+                    f"Snapshot references non-existent regime '{snapshot.regime_hash}' in EvaluationLedger"
+                )
+            if not regime.verify_digest():
+                raise GovernanceIntegrityError(
+                    f"Regime '{snapshot.regime_hash}' failed cryptographic digest verification"
+                )
+            if regime.strategy_id != strategy_id or regime.qualification_hash != record.qualification_hash:
+                raise GovernanceIntegrityError(
+                    f"Regime context (strategy={regime.strategy_id}, qual={regime.qualification_hash}) "
+                    f"does not match strategy '{strategy_id}'"
+                )
+            regime_h = regime.regime_hash
 
         reason_str = (
             f"Degradation breach: {degradation_event.rule_name} "
@@ -351,3 +397,45 @@ class PaperGovernanceService:
             timestamp=trans_ts,
         )
         return transition
+
+    def verify_strategy_transition_linkage(self, strategy_id: str) -> bool:
+        """Verify that StrategyRegistry.latest_transition_hash points to an authoritative, untampered transition in EvaluationLedger."""
+        record = self._registry.get_strategy(strategy_id)
+        if record.latest_transition_hash is None:
+            # Pre-governance states (e.g. initial registration) without lifecycle transition
+            return record.state not in (
+                StrategyLifecycleState.PAPER_ACTIVE,
+                StrategyLifecycleState.DEGRADED,
+                StrategyLifecycleState.RETIRED,
+            )
+
+        trans = self._ledger.get_transition(record.latest_transition_hash)
+        if trans is None:
+            return False
+        if not trans.verify_digest():
+            return False
+        if trans.strategy_id != record.strategy_id:
+            return False
+        if trans.new_state != record.state.value:
+            return False
+        if record.qualification_hash and trans.qualification_hash:
+            if record.qualification_hash != trans.qualification_hash:
+                return False
+        return True
+
+    def get_authorized_transition(self, strategy_id: str) -> PaperEvaluationTransition | None:
+        """Retrieve the authoritative PaperEvaluationTransition for a strategy, verified against StrategyRegistry."""
+        record = self._registry.get_strategy(strategy_id)
+        if record.latest_transition_hash is None:
+            return None
+        trans = self._ledger.get_transition(record.latest_transition_hash)
+        if trans is None:
+            return None
+        if not trans.verify_digest():
+            return None
+        if trans.strategy_id != record.strategy_id or trans.new_state != record.state.value:
+            return None
+        if record.qualification_hash and trans.qualification_hash:
+            if record.qualification_hash != trans.qualification_hash:
+                return None
+        return trans

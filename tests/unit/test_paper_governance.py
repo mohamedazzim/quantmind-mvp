@@ -137,7 +137,7 @@ def _make_replay_report(strat_id: str, qual: StrategyQualificationRecord) -> "Re
         expectancy=90.0,
         sharpe_ratio=1.5,
         session_breakdown=(session,),
-        created_at="2026-01-01T16:00:00+00:00",
+        created_at="2026-01-01T03:15:00+00:00",
         qualification_hash=qual.record_hash,
         dataset_sha256=qual.dataset_sha256,
         split_zone="FORWARD_PAPER",
@@ -163,7 +163,7 @@ def _make_baseline(strat_id: str, qual: StrategyQualificationRecord) -> tuple["P
         baseline_execution_policy="next_bar_open_v1",
         baseline_cost_schedule_hash="csh" + "a" * 61,
         baseline_risk_config_hash="rch" + "a" * 61,
-        created_at="2026-01-01T16:30:00+00:00",
+        created_at="2026-01-01T03:30:00+00:00",
     )
     return baseline, report
 
