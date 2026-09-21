@@ -12,7 +12,11 @@ import hashlib
 from typing import TYPE_CHECKING, Any
 
 from quantmind.paper.evaluation.ledger import EvaluationLedger, EvaluationLedgerIntegrityError
-from quantmind.paper.evaluation.models import DegradationEvent, PaperEvaluationTransition
+from quantmind.paper.evaluation.models import (
+    DegradationEvent,
+    PaperEvaluationTransition,
+    ResearchFeedbackRecord,
+)
 from quantmind.strategy.registry import (
     StrategyLifecycleState,
     StrategyRegistry,
@@ -339,6 +343,7 @@ class PaperGovernanceService:
         position_quantity: float | int = 0.0,
         initiator: str = "governance",
         timestamp: str | None = None,
+        feedback_record: ResearchFeedbackRecord | None = None,
     ) -> PaperEvaluationTransition:
         """Demote a DEGRADED strategy back to RESEARCH for model revision.
 
@@ -346,6 +351,12 @@ class PaperGovernanceService:
         - Strategy currently in DEGRADED state.
         - position_quantity == 0 (flat position required).
         - Invalidates qualification bindings in StrategyRegistry.
+        - If feedback_record is provided:
+          - Must be a valid ResearchFeedbackRecord with verified digest.
+          - Must match strategy_id.
+          - Must exist in EvaluationLedger.
+          - transition timestamp must be >= feedback_record.created_at.
+          - Sets evidence_type="RESEARCH_FEEDBACK" and evidence_hash=feedback_record.feedback_hash.
         """
         if not reason or not reason.strip():
             raise GovernanceIntegrityError(
@@ -358,7 +369,10 @@ class PaperGovernanceService:
                 "Strategy must be flat (position_quantity == 0)."
             )
 
-        record = self._registry.get_strategy(strategy_id)
+        try:
+            record = self._registry.get_strategy(strategy_id)
+        except KeyError:
+            raise GovernanceIntegrityError(f"Strategy '{strategy_id}' not found in StrategyRegistry")
         if record.state != StrategyLifecycleState.DEGRADED:
             raise GovernanceIntegrityError(
                 f"Cannot return strategy '{strategy_id}' to RESEARCH: current state is '{record.state.value}', "
@@ -371,15 +385,46 @@ class PaperGovernanceService:
                 f"Causal ordering violation: transition timestamp '{trans_ts}' is earlier than updated_at '{record.updated_at}'"
             )
 
-        evidence_content = f"{strategy_id}:{reason}:{trans_ts}".encode("utf-8")
-        evidence_hash = hashlib.sha256(evidence_content).hexdigest()
+        if feedback_record is not None:
+            if not isinstance(feedback_record, ResearchFeedbackRecord):
+                raise GovernanceIntegrityError(
+                    f"feedback_record must be an instance of ResearchFeedbackRecord, got {type(feedback_record).__name__}"
+                )
+            if not feedback_record.verify_digest():
+                raise GovernanceIntegrityError(
+                    f"ResearchFeedbackRecord '{feedback_record.feedback_hash}' failed digest verification"
+                )
+            if feedback_record.strategy_id != strategy_id:
+                raise GovernanceIntegrityError(
+                    f"ResearchFeedbackRecord strategy '{feedback_record.strategy_id}' does not match strategy '{strategy_id}'"
+                )
+            stored_fb = self._ledger.get_feedback(feedback_record.feedback_hash)
+            if stored_fb is None:
+                raise GovernanceIntegrityError(
+                    f"ResearchFeedbackRecord '{feedback_record.feedback_hash}' not found in EvaluationLedger"
+                )
+            if stored_fb.canonical_dict() != feedback_record.canonical_dict():
+                raise GovernanceIntegrityError(
+                    "ResearchFeedbackRecord does not match stored authoritative ledger record"
+                )
+            if trans_ts < feedback_record.created_at:
+                raise GovernanceCausalError(
+                    f"Causal ordering violation: transition timestamp '{trans_ts}' is earlier than "
+                    f"feedback created_at '{feedback_record.created_at}'"
+                )
+            evidence_type = "RESEARCH_FEEDBACK"
+            evidence_hash = feedback_record.feedback_hash
+        else:
+            evidence_content = f"{strategy_id}:{reason}:{trans_ts}".encode("utf-8")
+            evidence_hash = hashlib.sha256(evidence_content).hexdigest()
+            evidence_type = "re_research_decision"
 
         transition = PaperEvaluationTransition.create(
             strategy_id=strategy_id,
             old_state=StrategyLifecycleState.DEGRADED.value,
             new_state=StrategyLifecycleState.RESEARCH.value,
             initiator=initiator,
-            evidence_type="re_research_decision",
+            evidence_type=evidence_type,
             evidence_hash=evidence_hash,
             reason=reason,
             timestamp=trans_ts,

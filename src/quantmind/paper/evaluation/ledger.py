@@ -24,6 +24,7 @@ from quantmind.paper.evaluation.models import (
     PaperEvaluationBaseline,
     PaperEvaluationRegime,
     PaperEvaluationTransition,
+    ResearchFeedbackRecord,
 )
 from quantmind.paper.models import ReplayReport, ReplaySessionSummary
 
@@ -222,6 +223,34 @@ class EvaluationLedger:
             BEGIN
                 SELECT RAISE(ABORT, 'paper evaluation regimes are immutable and cannot be updated');
             END;
+
+            CREATE TABLE IF NOT EXISTS research_feedback (
+                feedback_id TEXT PRIMARY KEY,
+                strategy_id TEXT NOT NULL,
+                qualification_hash TEXT NOT NULL,
+                degradation_event_hash TEXT NOT NULL,
+                dataset_version TEXT NOT NULL,
+                failure_mode TEXT NOT NULL,
+                realized_sharpe REAL,
+                drawdown_expansion_ratio REAL NOT NULL,
+                realized_slippage_bps REAL NOT NULL,
+                empirical_notes TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                feedback_hash TEXT UNIQUE NOT NULL,
+                FOREIGN KEY (degradation_event_hash) REFERENCES degradation_events(event_hash)
+            );
+
+            CREATE TRIGGER IF NOT EXISTS research_feedback_no_delete
+            BEFORE DELETE ON research_feedback
+            BEGIN
+                SELECT RAISE(ABORT, 'research feedback records are permanent and cannot be deleted');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS research_feedback_no_update
+            BEFORE UPDATE ON research_feedback
+            BEGIN
+                SELECT RAISE(ABORT, 'research feedback records are immutable and cannot be updated');
+            END;
             """
         )
 
@@ -335,6 +364,21 @@ class EvaluationLedger:
             monitoring_protocol_version=row["monitoring_protocol_version"],
             regime_hash=row["regime_hash"],
             created_at=row["created_at"],
+        )
+
+    def _row_to_feedback(self, row: sqlite3.Row) -> ResearchFeedbackRecord:
+        return ResearchFeedbackRecord(
+            strategy_id=row["strategy_id"],
+            qualification_hash=row["qualification_hash"],
+            degradation_event_hash=row["degradation_event_hash"],
+            dataset_version=row["dataset_version"],
+            failure_mode=row["failure_mode"],
+            realized_sharpe=row["realized_sharpe"],
+            drawdown_expansion_ratio=float(row["drawdown_expansion_ratio"]),
+            realized_slippage_bps=float(row["realized_slippage_bps"]),
+            empirical_notes=row["empirical_notes"],
+            created_at=row["created_at"],
+            feedback_hash=row["feedback_hash"],
         )
 
     # -----------------------------------------------------------------------
@@ -1064,6 +1108,111 @@ class EvaluationLedger:
             (strategy_id,),
         ).fetchall()
         return [self._row_to_regime(r) for r in rows]
+
+    def record_feedback(self, feedback: ResearchFeedbackRecord) -> ResearchFeedbackRecord:
+        """Idempotently insert a ResearchFeedbackRecord or return the existing identical record."""
+        if type(feedback) is not ResearchFeedbackRecord:
+            raise TypeError(f"Expected ResearchFeedbackRecord, got {type(feedback).__name__}")
+
+        if not feedback.verify_digest():
+            raise EvaluationLedgerIntegrityError(
+                f"ResearchFeedbackRecord failed digest verification (stored: {feedback.feedback_hash}, "
+                f"computed: {feedback.compute_hash()})"
+            )
+
+        # 1. Query by feedback_hash
+        row = self._connection.execute(
+            "SELECT * FROM research_feedback WHERE feedback_hash = ?",
+            (feedback.feedback_hash,),
+        ).fetchone()
+
+        if row is not None:
+            existing = self._row_to_feedback(row)
+            if existing.canonical_dict() != feedback.canonical_dict():
+                raise EvaluationLedgerIntegrityError(
+                    f"Feedback hash collision with conflicting semantic content for hash '{feedback.feedback_hash}'"
+                )
+            return existing
+
+        # 2. Check ID collision
+        id_collision = self._connection.execute(
+            "SELECT feedback_hash FROM research_feedback WHERE feedback_id = ?",
+            (feedback.derived_feedback_id,),
+        ).fetchone()
+        if id_collision is not None:
+            raise EvaluationLedgerIntegrityError(
+                f"Feedback ID collision for '{feedback.derived_feedback_id}' with different hash "
+                f"'{id_collision['feedback_hash']}'"
+            )
+
+        # 3. Check foreign key reference: degradation_event_hash
+        deg_row = self._connection.execute(
+            "SELECT strategy_id, qualification_hash FROM degradation_events WHERE event_hash = ?",
+            (feedback.degradation_event_hash,),
+        ).fetchone()
+        if deg_row is None:
+            raise EvaluationLedgerIntegrityError(
+                f"ResearchFeedbackRecord references non-existent degradation_event_hash '{feedback.degradation_event_hash}'"
+            )
+        if deg_row["strategy_id"] != feedback.strategy_id or deg_row["qualification_hash"] != feedback.qualification_hash:
+            raise EvaluationLedgerIntegrityError(
+                f"ResearchFeedbackRecord context (strategy={feedback.strategy_id}, qual={feedback.qualification_hash}) "
+                f"does not match referenced degradation event (strategy={deg_row['strategy_id']}, qual={deg_row['qualification_hash']})"
+            )
+
+        # 4. Insert
+        try:
+            self._connection.execute(
+                """
+                INSERT INTO research_feedback (
+                    feedback_id, strategy_id, qualification_hash, degradation_event_hash,
+                    dataset_version, failure_mode, realized_sharpe, drawdown_expansion_ratio,
+                    realized_slippage_bps, empirical_notes, created_at, feedback_hash
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    feedback.derived_feedback_id,
+                    feedback.strategy_id,
+                    feedback.qualification_hash,
+                    feedback.degradation_event_hash,
+                    feedback.dataset_version,
+                    feedback.failure_mode,
+                    feedback.realized_sharpe,
+                    feedback.drawdown_expansion_ratio,
+                    feedback.realized_slippage_bps,
+                    feedback.empirical_notes,
+                    feedback.created_at,
+                    feedback.feedback_hash,
+                ),
+            )
+        except sqlite3.IntegrityError as e:
+            raise EvaluationLedgerIntegrityError(f"Failed to insert research feedback: {e}") from e
+
+        return feedback
+
+    def get_feedback(self, feedback_hash: str) -> ResearchFeedbackRecord | None:
+        """Retrieve a ResearchFeedbackRecord by its semantic SHA-256 digest."""
+        row = self._connection.execute(
+            "SELECT * FROM research_feedback WHERE feedback_hash = ?",
+            (feedback_hash,),
+        ).fetchone()
+        return self._row_to_feedback(row) if row is not None else None
+
+    def get_feedback_by_id(self, feedback_id: str) -> ResearchFeedbackRecord | None:
+        """Retrieve a ResearchFeedbackRecord by its derived administrative ID."""
+        row = self._connection.execute(
+            "SELECT * FROM research_feedback WHERE feedback_id = ?",
+            (feedback_id,),
+        ).fetchone()
+        return self._row_to_feedback(row) if row is not None else None
+
+    def list_feedback(self, strategy_id: str) -> list[ResearchFeedbackRecord]:
+        """List all research feedback records for a strategy, ordered by created_at ASC."""
+        rows = self._connection.execute(
+            "SELECT * FROM research_feedback WHERE strategy_id = ? ORDER BY created_at ASC",
+            (strategy_id,),
+        ).fetchall()
+        return [self._row_to_feedback(r) for r in rows]
 
     def close(self) -> None:
         """Close the underlying SQLite connection if owned."""

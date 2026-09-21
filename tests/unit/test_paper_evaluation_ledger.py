@@ -182,6 +182,7 @@ class TestEvaluationLedgerSchema:
             "paper_evaluation_transitions",
             "evaluation_baselines",
             "paper_evaluation_regimes",
+            "research_feedback",
         }
 
         # Check columns of monitoring_snapshots
@@ -238,6 +239,23 @@ class TestEvaluationLedgerSchema:
         assert "risk_config_hash" in regime_cols
         assert "monitoring_protocol_version" in regime_cols
         assert "created_at" in regime_cols
+
+        # Check columns of research_feedback
+        feedback_cols = {
+            c["name"] for c in conn.execute("PRAGMA table_info(research_feedback)").fetchall()
+        }
+        assert "feedback_id" in feedback_cols
+        assert "feedback_hash" in feedback_cols
+        assert "degradation_event_hash" in feedback_cols
+        assert "strategy_id" in feedback_cols
+        assert "qualification_hash" in feedback_cols
+        assert "dataset_version" in feedback_cols
+        assert "failure_mode" in feedback_cols
+        assert "realized_sharpe" in feedback_cols
+        assert "drawdown_expansion_ratio" in feedback_cols
+        assert "realized_slippage_bps" in feedback_cols
+        assert "empirical_notes" in feedback_cols
+        assert "created_at" in feedback_cols
 
 
 # ---------------------------------------------------------------------------

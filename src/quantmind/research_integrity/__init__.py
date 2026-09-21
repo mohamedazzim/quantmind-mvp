@@ -6,6 +6,13 @@ from .acquisition_gate import (
 )
 from .trial_ledger import ResearchBudget, TrialBudgetExceeded, TrialContext, TrialLedger
 from .harness import ResearchHarness, ResearchTask, derive_experiment_id, derive_strategy_id
+from .feedback_bridge import (
+    ResearchBridgeError,
+    ResearchBridgeIntegrityError,
+    ResearchFeedbackTask,
+    create_research_task_from_feedback,
+    derive_feedback_task_id,
+)
 from .holdout import (
     FinalEvaluationResult,
     HoldoutManager,
@@ -71,6 +78,11 @@ __all__ = [
     "TrialLedger",
     "ResearchHarness",
     "ResearchTask",
+    "ResearchBridgeError",
+    "ResearchBridgeIntegrityError",
+    "ResearchFeedbackTask",
+    "create_research_task_from_feedback",
+    "derive_feedback_task_id",
     "derive_experiment_id",
     "derive_strategy_id",
     "FinalEvaluationResult",
