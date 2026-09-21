@@ -94,6 +94,7 @@ class DegradationDetector:
         baseline_replay_report: ReplayReport | None = None,
         *,
         baseline: PaperEvaluationBaseline | None = None,
+        observed_replay_report: ReplayReport | None = None,
         baseline_max_dd_bps: float | None = None,
         configured_slippage_bps: float | None = None,
         consecutive_inactive_sessions: int | None = None,
@@ -109,6 +110,7 @@ class DegradationDetector:
             qualification_record=qualification_record,
             baseline_replay_report=baseline_replay_report,
             baseline=effective_baseline,
+            observed_replay_report=observed_replay_report,
             baseline_max_dd_bps=baseline_max_dd_bps,
             configured_slippage_bps=configured_slippage_bps,
             consecutive_inactive_sessions=consecutive_inactive_sessions,
@@ -125,6 +127,7 @@ def detect_degradations(
     baseline_replay_report: ReplayReport | None = None,
     *,
     baseline: PaperEvaluationBaseline | None = None,
+    observed_replay_report: ReplayReport | None = None,
     baseline_max_dd_bps: float | None = None,
     configured_slippage_bps: float | None = None,
     consecutive_inactive_sessions: int | None = None,
@@ -139,6 +142,8 @@ def detect_degradations(
         config: Authoritative MonitoringConfig.
         qualification_record: Authoritative StrategyQualificationRecord.
         baseline_replay_report: Optional authoritative ReplayReport for baseline replay evidence.
+        baseline: Optional explicit PaperEvaluationBaseline binding.
+        observed_replay_report: Optional authoritative ReplayReport for observed forward evaluation window.
         baseline_max_dd_bps: Explicit baseline max drawdown in bps (must match replay report if both supplied).
         configured_slippage_bps: Explicit modeled slippage in bps (must match replay report if both supplied).
         consecutive_inactive_sessions: Explicit count of consecutive sessions with 0 trades.
@@ -161,6 +166,7 @@ def detect_degradations(
         qualification_record=qualification_record,
         baseline_replay_report=baseline_replay_report,
         baseline=baseline,
+        observed_replay_report=observed_replay_report,
     )
 
     # -----------------------------------------------------------------------
@@ -359,6 +365,7 @@ def _verify_input_provenance(
     qualification_record: StrategyQualificationRecord,
     baseline_replay_report: ReplayReport | None,
     baseline: PaperEvaluationBaseline | None = None,
+    observed_replay_report: ReplayReport | None = None,
 ) -> None:
     """Enforce fail-closed provenance checks across all supplied inputs."""
     # 1. Exact Type Checks
@@ -381,6 +388,10 @@ def _verify_input_provenance(
     if baseline is not None and type(baseline) is not PaperEvaluationBaseline:
         raise MonitoringProvenanceError(
             f"baseline must be an instance of PaperEvaluationBaseline (exact type required), got {type(baseline)}"
+        )
+    if observed_replay_report is not None and type(observed_replay_report) is not ReplayReport:
+        raise MonitoringProvenanceError(
+            f"observed_replay_report must be an instance of ReplayReport (exact type required), got {type(observed_replay_report)}"
         )
 
     # 2. Snapshot Digest & Integrity
@@ -441,16 +452,44 @@ def _verify_input_provenance(
             raise MonitoringProvenanceError(
                 f"Supplied ReplayReport {baseline_replay_report.report_hash} is not the explicitly bound baseline {baseline.baseline_replay_report_hash}"
             )
-        if baseline_replay_report.report_hash != snapshot.replay_report_hash:
-            raise MonitoringProvenanceError(
-                f"Baseline ReplayReport hash mismatch: expected {snapshot.replay_report_hash}, got {baseline_replay_report.report_hash}"
-            )
         if baseline_replay_report.qualification_hash != snapshot.qualification_hash:
             raise MonitoringProvenanceError(
                 f"Baseline ReplayReport qualification_hash mismatch: expected {snapshot.qualification_hash}, got {baseline_replay_report.qualification_hash}"
             )
 
-    # 8. Authoritative Baseline Binding Verification (if supplied)
+    # 8. Observed Replay Report Binding (if supplied)
+    if observed_replay_report is not None:
+        computed_obs_hash = observed_replay_report.compute_report_hash()
+        if observed_replay_report.report_hash != computed_obs_hash:
+            raise MonitoringProvenanceError(
+                "Observed ReplayReport digest verification failed (tampered observed replay report)"
+            )
+        if observed_replay_report.strategy_id != snapshot.strategy_id:
+            raise MonitoringProvenanceError(
+                f"Observed ReplayReport strategy_id mismatch: {observed_replay_report.strategy_id} != {snapshot.strategy_id}"
+            )
+        if observed_replay_report.qualification_hash != snapshot.qualification_hash:
+            raise MonitoringProvenanceError(
+                f"Observed ReplayReport qualification_hash mismatch: expected {snapshot.qualification_hash}, got {observed_replay_report.qualification_hash}"
+            )
+        if observed_replay_report.report_hash != snapshot.replay_report_hash:
+            raise MonitoringProvenanceError(
+                f"Observed ReplayReport hash mismatch: expected {snapshot.replay_report_hash}, got {observed_replay_report.report_hash}"
+            )
+        if observed_replay_report.dataset_version != snapshot.dataset_version:
+            raise MonitoringProvenanceError(
+                f"Observed ReplayReport dataset_version mismatch: {observed_replay_report.dataset_version} != {snapshot.dataset_version}"
+            )
+        if observed_replay_report.dataset_sha256 != snapshot.dataset_sha256:
+            raise MonitoringProvenanceError(
+                f"Observed ReplayReport dataset_sha256 mismatch: {observed_replay_report.dataset_sha256} != {snapshot.dataset_sha256}"
+            )
+        if observed_replay_report.split_zone != snapshot.split_zone:
+            raise MonitoringProvenanceError(
+                f"Observed ReplayReport split_zone mismatch: {observed_replay_report.split_zone} != {snapshot.split_zone}"
+            )
+
+    # 9. Authoritative Baseline Binding Verification (if supplied)
     if baseline is not None:
         if not baseline.verify_digest():
             raise MonitoringProvenanceError(
@@ -475,10 +514,6 @@ def _verify_input_provenance(
         if baseline.baseline_split_zone != snapshot.split_zone:
             raise MonitoringProvenanceError(
                 f"Baseline binding split_zone mismatch: {baseline.baseline_split_zone} != {snapshot.split_zone}"
-            )
-        if baseline.baseline_replay_report_hash != snapshot.replay_report_hash:
-            raise MonitoringProvenanceError(
-                f"Snapshot replay_report_hash does not match explicitly bound baseline: {snapshot.replay_report_hash} != {baseline.baseline_replay_report_hash}"
             )
         if baseline_replay_report is not None:
             if baseline_replay_report.report_hash != baseline.baseline_replay_report_hash:

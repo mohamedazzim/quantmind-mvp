@@ -947,6 +947,321 @@ class TestAuthoritativeBaselineSelection:
 
 
 # ---------------------------------------------------------------------------
+# 9b. Observed Replay Report Provenance & Separation from Baseline (M4.2)
+# ---------------------------------------------------------------------------
+
+
+class TestObservedReplayReportProvenanceAndDecoupling:
+    """Test separation of authoritative baseline replay evidence from observed paper evidence (M4.2)."""
+
+    def test_distinct_baseline_and_observed_replay_reports_accepted(self) -> None:
+        config = _make_valid_config(max_drawdown_expansion_limit=1.5)
+        qual = _make_valid_qualification_record()
+
+        # 1. Authoritative baseline replay report (from backtest/qualification)
+        rep_base = _make_valid_replay_report(
+            strategy_id=qual.strategy_id,
+            qualification_hash=qual.record_hash,
+            max_drawdown_bps=500.0,
+            slippage_bps_per_side=4.0,
+        )
+        baseline = PaperEvaluationBaseline.from_replay_report(rep_base)
+
+        # 2. Observed forward paper replay report (from evaluation window)
+        obs_sessions = (
+            ReplaySessionSummary(
+                session_id="SESS-OBS-001",
+                start_ts="2026-03-15T09:15:00Z",
+                end_ts="2026-03-15T15:30:00Z",
+                trades=12,
+                gross_pnl=6000.0,
+                net_pnl=5400.0,
+            ),
+        )
+        rep_obs = ReplayReport.create(
+            strategy_id=qual.strategy_id,
+            qualification_id=qual.qualification_id,
+            dataset_version=qual.dataset_version,
+            dataset_sha256=qual.dataset_sha256,
+            trade_count=60,
+            gross_pnl=25000.0,
+            net_pnl=21000.0,
+            costs=2500.0,
+            slippage=1500.0,
+            max_drawdown_bps=800.0,
+            exposure=75000.0,
+            win_rate=0.58,
+            expectancy=350.0,
+            sharpe_ratio=1.95,
+            session_breakdown=obs_sessions,
+            created_at="2026-03-31T15:30:00Z",
+            qualification_hash=qual.record_hash,
+            slippage_bps_per_side=4.0,
+            split_zone="FORWARD_PAPER",
+        )
+
+        assert rep_base.report_hash != rep_obs.report_hash
+
+        snap = _make_valid_snapshot(
+            config, qual, rep_report=rep_obs, max_drawdown_bps=800.0
+        )
+        assert snap.replay_report_hash == rep_obs.report_hash
+
+        events = detect_degradations(
+            snap, config, qual,
+            baseline_replay_report=rep_base,
+            baseline=baseline,
+            observed_replay_report=rep_obs,
+        )
+        assert len(events) == 1
+        assert events[0].rule_name == RULE_DD_EXPANSION_CRITICAL
+        assert events[0].threshold_value == 750.0
+
+    def test_tampered_observed_replay_report_rejected(self) -> None:
+        config = _make_valid_config()
+        qual = _make_valid_qualification_record()
+        rep_base = _make_valid_replay_report(
+            strategy_id=qual.strategy_id,
+            qualification_hash=qual.record_hash,
+        )
+        baseline = PaperEvaluationBaseline.from_replay_report(rep_base)
+
+        rep_obs = _make_valid_replay_report(
+            strategy_id=qual.strategy_id,
+            qualification_hash=qual.record_hash,
+            max_drawdown_bps=450.0,
+        )
+        snap = _make_valid_snapshot(config, qual, rep_report=rep_obs)
+
+        tampered_obs = ReplayReport(
+            **{k: v for k, v in rep_obs.__dict__.items() if k != "net_pnl"},
+            net_pnl=999999.0,
+        )
+
+        with pytest.raises(
+            MonitoringProvenanceError,
+            match="Observed ReplayReport digest verification failed",
+        ):
+            detect_degradations(
+                snap, config, qual,
+                baseline_replay_report=rep_base,
+                baseline=baseline,
+                observed_replay_report=tampered_obs,
+            )
+
+    def test_mismatched_observed_replay_report_hash_rejected(self) -> None:
+        config = _make_valid_config()
+        qual = _make_valid_qualification_record()
+        rep_base = _make_valid_replay_report(
+            strategy_id=qual.strategy_id,
+            qualification_hash=qual.record_hash,
+        )
+        baseline = PaperEvaluationBaseline.from_replay_report(rep_base)
+
+        rep_obs1 = _make_valid_replay_report(
+            strategy_id=qual.strategy_id,
+            qualification_hash=qual.record_hash,
+            max_drawdown_bps=450.0,
+        )
+        rep_obs2 = _make_valid_replay_report(
+            strategy_id=qual.strategy_id,
+            qualification_hash=qual.record_hash,
+            max_drawdown_bps=460.0,
+        )
+        snap = _make_valid_snapshot(config, qual, rep_report=rep_obs1)
+
+        with pytest.raises(
+            MonitoringProvenanceError,
+            match="Observed ReplayReport hash mismatch",
+        ):
+            detect_degradations(
+                snap, config, qual,
+                baseline_replay_report=rep_base,
+                baseline=baseline,
+                observed_replay_report=rep_obs2,
+            )
+
+    def test_wrong_strategy_in_observed_replay_report_rejected(self) -> None:
+        config = _make_valid_config()
+        qual = _make_valid_qualification_record()
+        rep_base = _make_valid_replay_report(
+            strategy_id=qual.strategy_id,
+            qualification_hash=qual.record_hash,
+        )
+        baseline = PaperEvaluationBaseline.from_replay_report(rep_base)
+
+        rep_wrong_strat = _make_valid_replay_report(
+            strategy_id="STRAT-DIFFERENT",
+            qualification_hash=qual.record_hash,
+        )
+        snap = _make_valid_snapshot(config, qual, rep_report=rep_wrong_strat)
+
+        with pytest.raises(
+            MonitoringProvenanceError,
+            match="Observed ReplayReport strategy_id mismatch",
+        ):
+            detect_degradations(
+                snap, config, qual,
+                baseline_replay_report=rep_base,
+                baseline=baseline,
+                observed_replay_report=rep_wrong_strat,
+            )
+
+    def test_wrong_qualification_in_observed_replay_report_rejected(self) -> None:
+        config = _make_valid_config()
+        qual = _make_valid_qualification_record()
+        rep_base = _make_valid_replay_report(
+            strategy_id=qual.strategy_id,
+            qualification_hash=qual.record_hash,
+        )
+        baseline = PaperEvaluationBaseline.from_replay_report(rep_base)
+
+        rep_wrong_qual = _make_valid_replay_report(
+            strategy_id=qual.strategy_id,
+            qualification_hash="wrong_qualification_hash_xyz",
+        )
+        snap = _make_valid_snapshot(config, qual, rep_report=rep_wrong_qual)
+
+        with pytest.raises(
+            MonitoringProvenanceError,
+            match="Observed ReplayReport qualification_hash mismatch",
+        ):
+            detect_degradations(
+                snap, config, qual,
+                baseline_replay_report=rep_base,
+                baseline=baseline,
+                observed_replay_report=rep_wrong_qual,
+            )
+
+    def test_wrong_dataset_in_observed_replay_report_rejected(self) -> None:
+        config = _make_valid_config()
+        qual = _make_valid_qualification_record()
+        rep_base = _make_valid_replay_report(
+            strategy_id=qual.strategy_id,
+            qualification_hash=qual.record_hash,
+        )
+        baseline = PaperEvaluationBaseline.from_replay_report(rep_base)
+
+        rep_wrong_ds = ReplayReport.create(
+            strategy_id=qual.strategy_id,
+            qualification_id=qual.qualification_id,
+            dataset_version="DS-DIFFERENT-VERSION",
+            dataset_sha256=qual.dataset_sha256,
+            trade_count=10,
+            gross_pnl=1000.0,
+            net_pnl=900.0,
+            costs=50.0,
+            slippage=50.0,
+            max_drawdown_bps=300.0,
+            exposure=10000.0,
+            win_rate=0.5,
+            expectancy=100.0,
+            sharpe_ratio=1.5,
+            session_breakdown=(),
+            created_at="2026-03-31T15:30:00Z",
+            qualification_hash=qual.record_hash,
+            slippage_bps_per_side=4.0,
+            split_zone="FORWARD_PAPER",
+        )
+        snap = _make_valid_snapshot(config, qual, rep_report=rep_wrong_ds)
+
+        with pytest.raises(
+            MonitoringProvenanceError,
+            match="Observed ReplayReport dataset_version mismatch",
+        ):
+            detect_degradations(
+                snap, config, qual,
+                baseline_replay_report=rep_base,
+                baseline=baseline,
+                observed_replay_report=rep_wrong_ds,
+            )
+
+    def test_wrong_split_zone_in_observed_replay_report_rejected(self) -> None:
+        config = _make_valid_config()
+        qual = _make_valid_qualification_record()
+        rep_base = _make_valid_replay_report(
+            strategy_id=qual.strategy_id,
+            qualification_hash=qual.record_hash,
+        )
+        baseline = PaperEvaluationBaseline.from_replay_report(rep_base)
+
+        rep_wrong_zone = ReplayReport.create(
+            strategy_id=qual.strategy_id,
+            qualification_id=qual.qualification_id,
+            dataset_version=qual.dataset_version,
+            dataset_sha256=qual.dataset_sha256,
+            trade_count=10,
+            gross_pnl=1000.0,
+            net_pnl=900.0,
+            costs=50.0,
+            slippage=50.0,
+            max_drawdown_bps=300.0,
+            exposure=10000.0,
+            win_rate=0.5,
+            expectancy=100.0,
+            sharpe_ratio=1.5,
+            session_breakdown=(),
+            created_at="2026-03-31T15:30:00Z",
+            qualification_hash=qual.record_hash,
+            slippage_bps_per_side=4.0,
+            split_zone="TRAIN",
+        )
+        snap = _make_valid_snapshot(config, qual, rep_report=rep_wrong_zone)
+
+        with pytest.raises(
+            MonitoringProvenanceError,
+            match="Observed ReplayReport split_zone mismatch",
+        ):
+            detect_degradations(
+                snap, config, qual,
+                baseline_replay_report=rep_base,
+                baseline=baseline,
+                observed_replay_report=rep_wrong_zone,
+            )
+
+    def test_invalid_type_observed_replay_report_rejected(self) -> None:
+        config = _make_valid_config()
+        qual = _make_valid_qualification_record()
+        snap = _make_valid_snapshot(config, qual)
+
+        with pytest.raises(
+            MonitoringProvenanceError,
+            match="observed_replay_report must be an instance of ReplayReport",
+        ):
+            detect_degradations(
+                snap, config, qual,
+                observed_replay_report="not a report",  # type: ignore[arg-type]
+            )
+
+    def test_evaluator_class_with_distinct_baseline_and_observed_reports(self) -> None:
+        config = _make_valid_config(max_drawdown_expansion_limit=1.5)
+        qual = _make_valid_qualification_record()
+        rep_base = _make_valid_replay_report(
+            strategy_id=qual.strategy_id,
+            qualification_hash=qual.record_hash,
+            max_drawdown_bps=500.0,
+        )
+        baseline = PaperEvaluationBaseline.from_replay_report(rep_base)
+        detector = DegradationDetector(config=config, baseline=baseline)
+
+        rep_obs = _make_valid_replay_report(
+            strategy_id=qual.strategy_id,
+            qualification_hash=qual.record_hash,
+            max_drawdown_bps=800.0,
+        )
+        snap = _make_valid_snapshot(config, qual, rep_report=rep_obs, max_drawdown_bps=800.0)
+
+        events = detector.evaluate(
+            snapshot=snap,
+            qualification_record=qual,
+            baseline_replay_report=rep_base,
+            observed_replay_report=rep_obs,
+        )
+        assert len(events) == 1
+        assert events[0].rule_name == RULE_DD_EXPANSION_CRITICAL
+
+
+# ---------------------------------------------------------------------------
 # 10. Slippage Unit Verification & Two-Sided Trade Audit
 # ---------------------------------------------------------------------------
 
