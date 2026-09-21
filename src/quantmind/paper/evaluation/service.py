@@ -230,6 +230,8 @@ class PaperEvaluationService:
             window_start_ts=window_start_ts,
             window_end_ts=window_end_ts,
             monitoring_config=monitoring_config,
+            paper_ledger=paper_ledger,
+            evaluation_ledger=evaluation_ledger,
             observed_replay_report=observed_replay_report,
         )
 
@@ -241,6 +243,7 @@ class PaperEvaluationService:
             evaluation_ledger=evaluation_ledger,
             strategy_id=strategy_id,
             qualification_hash=qualification_hash,
+            qualification_record=qualification_record,
         )
 
         # ------------------------------------------------------------------
@@ -258,7 +261,9 @@ class PaperEvaluationService:
             observed_replay_report=observed_replay_report,
             strategy_id=strategy_id,
             qualification_hash=qualification_hash,
+            window_start_ts=window_start_ts,
             window_end_ts=window_end_ts,
+            baseline=baseline,
         )
 
         # ------------------------------------------------------------------
@@ -389,6 +394,8 @@ class PaperEvaluationService:
         window_start_ts: str,
         window_end_ts: str,
         monitoring_config: MonitoringConfig,
+        paper_ledger: PaperLedger,
+        evaluation_ledger: EvaluationLedger,
         observed_replay_report: ReplayReport | None,
     ) -> None:
         """Fail-closed validation of all caller-supplied inputs."""
@@ -405,7 +412,7 @@ class PaperEvaluationService:
                 f"window_start_ts ({window_start_ts}) must be <= window_end_ts ({window_end_ts})"
             )
 
-        # Exact type checks
+        # Exact type checks (rejects duck-typed or subclassed models/ledgers)
         if type(qualification_record) is not StrategyQualificationRecord:
             raise PaperEvaluationServiceError(
                 f"qualification_record must be StrategyQualificationRecord, got {type(qualification_record)}"
@@ -413,6 +420,14 @@ class PaperEvaluationService:
         if type(monitoring_config) is not MonitoringConfig:
             raise PaperEvaluationServiceError(
                 f"monitoring_config must be MonitoringConfig, got {type(monitoring_config)}"
+            )
+        if type(paper_ledger) is not PaperLedger:
+            raise PaperEvaluationServiceError(
+                f"paper_ledger must be PaperLedger, got {type(paper_ledger)}"
+            )
+        if type(evaluation_ledger) is not EvaluationLedger:
+            raise PaperEvaluationServiceError(
+                f"evaluation_ledger must be EvaluationLedger, got {type(evaluation_ledger)}"
             )
         if observed_replay_report is not None and type(observed_replay_report) is not ReplayReport:
             raise PaperEvaluationServiceError(
@@ -462,6 +477,15 @@ class PaperEvaluationService:
                     f"observed_replay_report.split_zone must be 'FORWARD_PAPER', "
                     f"got '{obs.split_zone}'"
                 )
+            if obs.dataset_version != qualification_record.dataset_version:
+                raise PaperEvaluationServiceError(
+                    f"observed_replay_report.dataset_version mismatch: "
+                    f"'{obs.dataset_version}' != '{qualification_record.dataset_version}'"
+                )
+            if obs.dataset_sha256 != qualification_record.dataset_sha256:
+                raise PaperEvaluationServiceError(
+                    "observed_replay_report.dataset_sha256 mismatch with qualification record"
+                )
 
     # -----------------------------------------------------------------------
     # Phase 2: Load Authoritative Baseline
@@ -473,6 +497,7 @@ class PaperEvaluationService:
         evaluation_ledger: EvaluationLedger,
         strategy_id: str,
         qualification_hash: str,
+        qualification_record: StrategyQualificationRecord,
     ) -> PaperEvaluationBaseline:
         """Load and verify the authoritative baseline from EvaluationLedger.
 
@@ -486,6 +511,10 @@ class PaperEvaluationService:
                 f"with qualification '{qualification_hash}'. "
                 "Register a baseline via EvaluationLedger.register_baseline() before evaluation."
             )
+        if type(baseline) is not PaperEvaluationBaseline:
+            raise PaperEvaluationServiceError(
+                f"Authoritative baseline must be PaperEvaluationBaseline, got {type(baseline)}"
+            )
         if not baseline.verify_digest():
             raise PaperEvaluationServiceError(
                 "Authoritative baseline binding digest verification failed (tampered baseline)"
@@ -498,6 +527,15 @@ class PaperEvaluationService:
             raise PaperEvaluationServiceError(
                 f"Baseline qualification_hash mismatch: "
                 f"'{baseline.qualification_hash}' != '{qualification_hash}'"
+            )
+        if baseline.baseline_dataset_version != qualification_record.dataset_version:
+            raise PaperEvaluationServiceError(
+                f"Baseline dataset_version mismatch: "
+                f"'{baseline.baseline_dataset_version}' != '{qualification_record.dataset_version}'"
+            )
+        if baseline.baseline_dataset_sha256 != qualification_record.dataset_sha256:
+            raise PaperEvaluationServiceError(
+                "Baseline dataset_sha256 mismatch with qualification record"
             )
         return baseline
 
@@ -520,6 +558,10 @@ class PaperEvaluationService:
             raise PaperEvaluationServiceError(
                 f"Baseline ReplayReport '{baseline.baseline_replay_report_hash}' "
                 "not found in PaperLedger"
+            )
+        if type(report) is not ReplayReport:
+            raise PaperEvaluationServiceError(
+                f"Baseline ReplayReport must be ReplayReport, got {type(report)}"
             )
         if report.report_hash != report.compute_report_hash():
             raise PaperEvaluationServiceError(
@@ -569,12 +611,14 @@ class PaperEvaluationService:
         observed_replay_report: ReplayReport | None,
         strategy_id: str,
         qualification_hash: str,
+        window_start_ts: str,
         window_end_ts: str,
+        baseline: PaperEvaluationBaseline,
     ) -> ReplayReport | None:
         """Apply future-coverage guard: sessions must not extend beyond T_cutoff.
 
-        The structural checks (digest, strategy_id, qualification_hash, split_zone)
-        are already done in _validate_inputs. This phase adds the temporal guard.
+        Also cross-verifies execution configuration consistency with baseline,
+        and ensures the report does not cover an older, disjoint window.
         """
         if observed_replay_report is None:
             return None
@@ -587,6 +631,31 @@ class PaperEvaluationService:
                     f"ending at '{sess.end_ts}' which is after T_cutoff '{window_end_ts}'. "
                     "This report covers future observations beyond the evaluation window."
                 )
+
+        # Disjoint older-window guard: if report has sessions, not all may end before window_start_ts
+        if observed_replay_report.session_breakdown and all(
+            sess.end_ts < window_start_ts for sess in observed_replay_report.session_breakdown
+        ):
+            raise PaperEvaluationServiceError(
+                f"observed_replay_report contains no sessions within or overlapping "
+                f"evaluation window [{window_start_ts}, {window_end_ts}] (older report / wrong window)"
+            )
+
+        # Execution configuration consistency with authoritative baseline
+        if observed_replay_report.execution_policy != baseline.baseline_execution_policy:
+            raise PaperEvaluationServiceError(
+                f"observed_replay_report.execution_policy mismatch: "
+                f"'{observed_replay_report.execution_policy}' != '{baseline.baseline_execution_policy}'"
+            )
+        if observed_replay_report.cost_schedule_hash != baseline.baseline_cost_schedule_hash:
+            raise PaperEvaluationServiceError(
+                "observed_replay_report.cost_schedule_hash mismatch with baseline"
+            )
+        if observed_replay_report.risk_config_hash != baseline.baseline_risk_config_hash:
+            raise PaperEvaluationServiceError(
+                "observed_replay_report.risk_config_hash mismatch with baseline"
+            )
+
         return observed_replay_report
 
     # -----------------------------------------------------------------------
