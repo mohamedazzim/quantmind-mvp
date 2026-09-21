@@ -135,7 +135,7 @@ DegradationEvent (event_hash)
      ▼ [Edge 9: Type A]                        ▼ [Edge 10: Type A]
 PaperGovernanceService.degrade_strategy   ResearchFeedbackService (Feedback Record)
      │                                         │
-     ▼ [Edge 11: Type A]                       ▼ [Edge 12: Type A]
+     ▼ [Edge 11: Type B]                       ▼ [Edge 12: Type C]
 PaperEvaluationTransition (DEGRADED)      ResearchFeedbackTask (Zero-Trial Context)
 ```
 
@@ -160,28 +160,25 @@ PaperEvaluationTransition (DEGRADED)      ResearchFeedbackTask (Zero-Trial Conte
 
 ## 5. Authoritative Lifecycle State Machine (M8-G)
 
-QuantMind enforces an explicit, directional lifecycle state machine in `StrategyRegistry`:
+QuantMind enforces an explicit, directional lifecycle state machine in `StrategyRegistry` comprising exactly **8 authoritative states**: `IDEA`, `RESEARCH`, `VALIDATION`, `REJECTED`, `PAPER_ELIGIBLE`, `PAPER_ACTIVE`, `DEGRADED`, and `RETIRED`:
 
 ```text
 [ IDEA ]
     │
     ▼ (Research exploration under budget)
-[ RESEARCH ]
+[ RESEARCH ] ──────────────────────────────────────────┐
+    │                                                  │
+    ▼ (Causal preflight & backtest completion)         │
+[ VALIDATION ] ────────────────────────────────────────┼────────► [ REJECTED ]
+    │                                                  │  (Failure, invalid holdout,
+    ▼ (StrategyValidationGate: EICT + DSR + Holdout)   │   or operator veto)
+[ PAPER_ELIGIBLE ] ────────────────────────────────────┘
     │
-    ▼ (Causal preflight & backtest completion)
-[ VALIDATION ]
-    │
-    ▼ (StrategyValidationGate certified: EICT + DSR + PASSED holdout)
-[ PAPER_ELIGIBLE ]
-    │
-    ▼ (Authoritative PaperEvaluationBaseline registered in EvaluationLedger)
+    ▼ (Authoritative PaperEvaluationBaseline registered)
 [ PAPER_ACTIVE ] ─── (Degradation Event Breached) ───► [ DEGRADED ]
     │                                                       │
     │ (Orderly flat retirement)                             │ (Flat retirement)
     ├───────────────────────────────────────────────────────┴────────► [ RETIRED ]
-    │
-    ▼ (Failure or operator veto)
-[ REJECTED ]
 ```
 
 ### Evidence Requirements for State Transitions:
@@ -195,6 +192,7 @@ QuantMind enforces an explicit, directional lifecycle state machine in `Strategy
 4. **`PAPER_ELIGIBLE -> PAPER_ACTIVE`**: Authoritative `PaperEvaluationBaseline` registered in `EvaluationLedger` bound to valid `ReplayReport`.
 5. **`PAPER_ACTIVE -> DEGRADED`**: Authoritative `DegradationEvent` with valid digest, matching strategy ID and qualification hash, referencing existing `MonitoringSnapshot`.
 6. **`DEGRADED -> RETIRED` or `PAPER_ACTIVE -> RETIRED`**: Strategy position quantity must be zero (`abs(position_quantity) < 1e-9`). Non-flat retirement is strictly rejected (`GovernanceIntegrityError`).
+7. **Transition to `REJECTED`**: Triggered immediately upon causal preflight failure, statistical validation gate rejection, holdout failure/burn, or operator veto. Replay and execution are permanently barred.
 
 ---
 
@@ -305,10 +303,10 @@ All 26 adversarial scenarios are implemented and verified in `tests/integration/
 | **PRD-4.0-REQ-04** | Out-of-sample Parquet return series storage with byte verification | `ArtifactRegistry` (`src/quantmind/research_integrity/artifacts.py`) | SHA-256 byte verification over persisted series |
 | **PRD-4.0-REQ-05** | Multiple-testing false discovery adjustment via EICT-CORR-1 & DSR | `EictCorr1Calculator`, `DeflatedSharpeCalculator` | Bailey & López de Prado (2014) formulation |
 | **PRD-4.0-REQ-06** | Authoritative Strategy Validation Gate & Qualification Records | `StrategyValidationGate`, `QualificationLedger` | Immutable qualification record with SHA-256 digest |
-| **PRD-4.0-REQ-07** | Directional Strategy Lifecycle State Machine | `StrategyRegistry` (`src/quantmind/strategy/registry.py`) | 7 lifecycle states; qualification gating enforced |
+| **PRD-4.0-REQ-07** | Directional Strategy Lifecycle State Machine | `StrategyRegistry` (`src/quantmind/strategy/registry.py`) | 8 lifecycle states; qualification gating enforced |
 | **PRD-4.0-REQ-08** | Normalized high-performance Market Data Replay Feed | `ReplayFeed` (`src/quantmind/paper/feed.py`) | Vectorized NumPy streaming; holdout access barred |
 | **PRD-4.0-REQ-09** | Pre-trade deterministic risk controls (7 rules) | `PaperRiskEngine` (`src/quantmind/paper/risk.py`) | 7 pre-trade rules; immutable risk event audit |
-| **PRD-4.0-REQ-08** | Deterministic causal paper execution model (`next_bar_open_v1`) | `PaperReplayEngine` (`src/quantmind/paper/engine.py`) | Next-bar-open execution; tick quantization; fee schedules |
+| **PRD-4.0-REQ-10** | Deterministic causal paper execution model (`next_bar_open_v1`) | `PaperReplayEngine` (`src/quantmind/paper/engine.py`) | Next-bar-open execution; tick quantization; fee schedules |
 | **PRD-4.0-REQ-11** | Append-only paper execution ledger | `PaperLedger` (`src/quantmind/paper/ledger.py`) | 5 tables; SQLite triggers abort delete/update |
 | **PRD-4.0-REQ-12** | Deterministic Replay Summary Reports | `ReplayReport` (`src/quantmind/paper/models.py`) | SHA-256 digest over canonical execution metrics |
 | **PRD-4.0-REQ-13** | Paper Evaluation Baseline & Regime Registration | `EvaluationLedger` (`src/quantmind/paper/evaluation/ledger.py`) | Binds qualification to authoritative baseline report |
@@ -316,4 +314,4 @@ All 26 adversarial scenarios are implemented and verified in `tests/integration/
 | **PRD-4.0-REQ-15** | Governance Lifecycle Degradation & Safe Flat Retirement | `PaperGovernanceService` (`src/quantmind/paper/evaluation/governance.py`) | Causal timestamps; non-flat position retirement blocked |
 | **PRD-4.0-REQ-16** | Observational Research Feedback Bridge | `ResearchFeedbackService`, `ResearchFeedbackBridge` | Non-mutating feedback records; zero-trial tasks |
 | **PRD-4.0-REQ-17** | Complete Database Immutability via SQL Triggers | All 8 Ledgers (20 Tables) | 16 BEFORE UPDATE/DELETE triggers abort tampering |
-| **PRD-4.0-REQ-18** | End-to-End Cryptographic Provenance Chain | Full Architecture (Type A Provenance Edges) | Cryptographic digests verify end-to-end auditability |
+| **PRD-4.0-REQ-18** | End-to-End Provenance & Traceability | Full Architecture (Types A, B, C, D Provenance Controls) | Complete verified provenance chain using cryptographic, referential, semantic, and causal controls as applicable. |

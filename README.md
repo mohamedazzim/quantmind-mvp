@@ -94,7 +94,7 @@ ReplayReport (deterministic observational report sealed with SHA-256 report_hash
 - **`StrategyQualificationRecord`**: Frozen dataclass containing complete provenance, observed Sharpe, DSR, EICT, trade count, holdout state, robustness status, and validation status, sealed by a SHA-256 digest over its canonical JSON.
 - **`QualificationLedger`**: Append-only SQLite ledger with triggers raising SQL integrity errors on any `DELETE` or `UPDATE` attempt.
 - **Validation State Machine**: Enforces legal transitions (`CANDIDATE` -> `UNDERPOWERED` / `VALIDATION` / `REJECTED` / `HOLDOUT_REQUIRED` -> `HOLDOUT_PASSED` -> `PAPER_ELIGIBLE`). Illegal shortcuts (e.g. `REJECTED` -> `PAPER_ELIGIBLE` or `UNDERPOWERED` -> `PAPER_ELIGIBLE`) are permanently barred.
-- **`StrategyRegistry`**: Tracks lifecycle states (`IDEA` -> `RESEARCH` -> `VALIDATION` -> `PAPER_ELIGIBLE` -> `PAPER_ACTIVE` -> `DEGRADED` -> `RETIRED`). Transition to `PAPER_ELIGIBLE` strictly requires an authoritative, cryptographically verified `StrategyQualificationRecord` with `final_status == ValidationStatus.PAPER_ELIGIBLE` and `holdout_state == "PASSED"`.
+- **`StrategyRegistry`**: Tracks 8 authoritative lifecycle states (`IDEA`, `RESEARCH`, `VALIDATION`, `REJECTED`, `PAPER_ELIGIBLE`, `PAPER_ACTIVE`, `DEGRADED`, `RETIRED`). Transition to `PAPER_ELIGIBLE` strictly requires an authoritative, cryptographically verified `StrategyQualificationRecord` with `final_status == ValidationStatus.PAPER_ELIGIBLE` and `holdout_state == "PASSED"`.
 - **`PaperReplayEligibility`**: Cryptographically verifies qualifications to authorize deterministic forward replay testing without starting live broker trading.
 
 
