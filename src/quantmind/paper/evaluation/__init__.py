@@ -4,6 +4,16 @@ This package provides window-bounded evaluation, rolling performance and executi
 quality metrics, degradation detection, and immutable evaluation evidence.
 """
 
+from .detector import (
+    DegradationDetector,
+    MP1_DROPOUT_WINDOW_SESSIONS,
+    RULE_DD_EXPANSION_CRITICAL,
+    RULE_RISK_REJECTION_SPIKE,
+    RULE_SHARPE_COLLAPSE,
+    RULE_SLIPPAGE_ANOMALY,
+    RULE_TRADE_DROPOUT,
+    detect_degradations,
+)
 from .ledger import (
     EvaluationLedger,
     EvaluationLedgerError,
@@ -42,16 +52,24 @@ from .models import (
 )
 
 __all__ = [
+    "DegradationDetector",
     "DegradationEvent",
     "EvaluationLedger",
     "EvaluationLedgerError",
     "EvaluationLedgerIntegrityError",
+    "MP1_DROPOUT_WINDOW_SESSIONS",
     "MonitoringConfig",
     "MonitoringConfigError",
     "MonitoringProvenanceError",
     "MonitoringSnapshot",
     "PaperEvaluationTransition",
+    "RULE_DD_EXPANSION_CRITICAL",
+    "RULE_RISK_REJECTION_SPIKE",
+    "RULE_SHARPE_COLLAPSE",
+    "RULE_SLIPPAGE_ANOMALY",
+    "RULE_TRADE_DROPOUT",
     "ResearchFeedbackRecord",
+    "detect_degradations",
     "compute_cost_to_turnover_bps",
     "compute_cost_to_turnover_bps_from_fills",
     "compute_cumulative_net_pnl",
