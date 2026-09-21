@@ -66,9 +66,6 @@ class ResearchFeedbackService:
         degradation_event: DegradationEvent,
         empirical_notes: str = "",
         created_at: str | None = None,
-        *,
-        failure_mode: str | None = None,
-        drawdown_expansion_ratio: float | None = None,
     ) -> ResearchFeedbackRecord:
         """Create an immutable ResearchFeedbackRecord from an authoritative DegradationEvent.
 
@@ -200,37 +197,34 @@ class ResearchFeedbackService:
                 f"Feedback timestamp '{feedback_ts}' is earlier than snapshot created_at '{snapshot.created_at}'"
             )
 
-        # Determine failure mode
-        eff_failure_mode = failure_mode or RULE_FAILURE_MODE_MAP.get(
+        # Determine failure mode strictly from authoritative DegradationEvent rule_name
+        eff_failure_mode = RULE_FAILURE_MODE_MAP.get(
             degradation_event.rule_name, degradation_event.rule_name
         )
 
-        # Determine drawdown expansion ratio
-        if drawdown_expansion_ratio is not None:
-            eff_dd_ratio = float(drawdown_expansion_ratio)
-        else:
-            details: dict[str, Any] = {}
-            try:
-                details = json.loads(degradation_event.details_json)
-            except Exception:
-                details = {}
+        # Determine drawdown expansion ratio strictly from authoritative details / snapshot
+        details: dict[str, Any] = {}
+        try:
+            details = json.loads(degradation_event.details_json)
+        except Exception:
+            details = {}
 
-            base_dd = details.get("baseline_max_dd_bps")
-            if base_dd is not None and float(base_dd) > 0:
-                eff_dd_ratio = float(snapshot.max_drawdown_bps) / float(base_dd)
-            elif (
-                degradation_event.rule_name == "RULE_DD_EXPANSION_CRITICAL"
-                and degradation_event.threshold_value > 0
-            ):
-                limit = float(details.get("max_drawdown_expansion_limit", 1.0))
-                base_dd_est = degradation_event.threshold_value / limit
-                eff_dd_ratio = (
-                    degradation_event.observed_value / base_dd_est
-                    if base_dd_est > 0
-                    else 1.0
-                )
-            else:
-                eff_dd_ratio = 1.0
+        base_dd = details.get("baseline_max_dd_bps")
+        if base_dd is not None and float(base_dd) > 0:
+            eff_dd_ratio = float(snapshot.max_drawdown_bps) / float(base_dd)
+        elif (
+            degradation_event.rule_name == "RULE_DD_EXPANSION_CRITICAL"
+            and degradation_event.threshold_value > 0
+        ):
+            limit = float(details.get("max_drawdown_expansion_limit", 1.0))
+            base_dd_est = degradation_event.threshold_value / limit
+            eff_dd_ratio = (
+                degradation_event.observed_value / base_dd_est
+                if base_dd_est > 0
+                else 1.0
+            )
+        else:
+            eff_dd_ratio = 1.0
 
         # Construct feedback record
         record = ResearchFeedbackRecord.create(

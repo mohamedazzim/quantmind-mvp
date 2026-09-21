@@ -1214,3 +1214,106 @@ def test_case_29_research_task_cannot_access_final_holdout() -> None:
             seed=42,
             budget=ResearchBudget(max_trials=10, max_runtime_minutes=60.0),
         )
+
+
+# Case 30: ResearchFeedbackTask cannot directly mutate StrategyRegistry
+def test_case_30_task_cannot_modify_strategy_registry() -> None:
+    registry = StrategyRegistry()
+    spec = _make_spec()
+    qual = _make_qualification(spec)
+    strat_id = registry.register_strategy(spec, initial_state=StrategyLifecycleState.IDEA)
+
+    valid_fb = ResearchFeedbackRecord.create(
+        strategy_id=strat_id,
+        qualification_hash=qual.record_hash,
+        degradation_event_hash="deg_001",
+        dataset_version="ds_v1",
+        failure_mode="SHARPE_COLLAPSE",
+        realized_sharpe=-0.2,
+        drawdown_expansion_ratio=1.1,
+        realized_slippage_bps=2.0,
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+    task = create_research_task_from_feedback(valid_fb)
+
+    # Strategy state remains untouched in IDEA
+    record = registry.get_strategy(strat_id)
+    assert record.state == StrategyLifecycleState.IDEA
+    assert not hasattr(task, "mutate_registry")
+    assert not hasattr(task, "activate_strategy")
+
+
+# Case 31: DEGRADE -> RESEARCH without feedback uses explicit governance decision type
+def test_case_31_degrade_to_research_without_feedback() -> None:
+    ledger = EvaluationLedger()
+    registry = StrategyRegistry()
+    spec = _make_spec()
+    qual = _make_qualification(spec)
+    strat_id, baseline = _setup_active_strategy(registry, ledger, qual, spec)
+    _, event = _create_snapshot_and_event(ledger, strat_id, qual, baseline)
+
+    governance = PaperGovernanceService(registry, ledger)
+    governance.degrade_strategy(event, timestamp="2026-01-02T16:30:00+00:00")
+    assert registry.get_strategy(strat_id).state == StrategyLifecycleState.DEGRADED
+
+    # Administrative demotion without research feedback record
+    trans = governance.re_research_strategy(
+        strat_id,
+        reason="Manual administrative model overhaul",
+        timestamp="2026-01-02T17:00:00+00:00",
+    )
+
+    # Must NOT pretend to be RESEARCH_FEEDBACK
+    assert trans.evidence_type != "RESEARCH_FEEDBACK"
+    assert trans.evidence_type == "re_research_decision"
+    assert trans.new_state == StrategyLifecycleState.RESEARCH.value
+
+    # Now verify with feedback_record on another strategy
+    strat2_spec = StrategySpec(
+        strategy_version="v2.0",
+        feature_version="feat_v2",
+        signal_name="current_bar_momentum",
+        parameters={"calendar_session_bars": 375, "session_window": [0.2, 0.8]},
+    )
+    qual2 = _make_qualification(strat2_spec)
+    strat2_id, base2 = _setup_active_strategy(registry, ledger, qual2, strat2_spec)
+    _, event2 = _create_snapshot_and_event(ledger, strat2_id, qual2, base2)
+    governance.degrade_strategy(event2, timestamp="2026-01-02T16:35:00+00:00")
+
+    service = ResearchFeedbackService(registry, ledger)
+    fb2 = service.create_feedback_from_event(event2, created_at="2026-01-02T17:00:00+00:00")
+    trans2 = governance.re_research_strategy(
+        strat2_id,
+        reason="Feedback-driven model revision",
+        feedback_record=fb2,
+        timestamp="2026-01-02T17:30:00+00:00",
+    )
+    assert trans2.evidence_type == "RESEARCH_FEEDBACK"
+    assert trans2.evidence_hash == fb2.feedback_hash
+
+
+# Case 32: ResearchFeedbackTask creation creates strictly zero TrialLedger rows
+def test_case_32_task_creation_creates_zero_trial_ledger_rows() -> None:
+    trial_ledger = TrialLedger()
+    valid_fb = ResearchFeedbackRecord.create(
+        strategy_id="STRAT-001",
+        qualification_hash="qual_001",
+        degradation_event_hash="deg_001",
+        dataset_version="ds_v1",
+        failure_mode="SHARPE_COLLAPSE",
+        realized_sharpe=-0.2,
+        drawdown_expansion_ratio=1.1,
+        realized_slippage_bps=2.0,
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+
+    # Derive task
+    task = create_research_task_from_feedback(valid_fb)
+    assert task is not None
+
+    # Check TrialLedger has 0 entries
+    trial_rows = trial_ledger._connection.execute("SELECT count(*) FROM trials").fetchone()[0]
+    assert trial_rows == 0
+
+    # Ensure task has no trial_id attribute
+    assert not hasattr(task, "trial_id")
