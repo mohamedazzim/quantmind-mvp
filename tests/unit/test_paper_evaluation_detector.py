@@ -25,6 +25,7 @@ from quantmind.paper.evaluation.models import (
     MonitoringConfig,
     MonitoringProvenanceError,
     MonitoringSnapshot,
+    PaperEvaluationBaseline,
 )
 from quantmind.paper.models import ReplayReport, ReplaySessionSummary
 from quantmind.research_integrity.qualification import (
@@ -104,6 +105,7 @@ def _make_valid_replay_report(
         strategy_id=strategy_id,
         qualification_id="QUAL-M4-001",
         dataset_version="DS-NIFTY-2026",
+        dataset_sha256="dataset_sha_1234567890abcdef",
         trade_count=50,
         gross_pnl=15000.0,
         net_pnl=12000.0,
@@ -744,3 +746,337 @@ class TestPropertyAndDeterminismInvariants:
 
         assert len(events_class) == len(events_func)
         assert events_class[0].event_hash == events_func[0].event_hash
+
+
+# ---------------------------------------------------------------------------
+# 9. M4.1 Baseline Provenance Closure Tests
+# ---------------------------------------------------------------------------
+
+
+class TestAuthoritativeBaselineSelection:
+    """Test explicit PaperEvaluationBaseline binding and rejection of arbitrary replay reports."""
+
+    def test_two_valid_replay_reports_unbound_report_rejected(self) -> None:
+        config = _make_valid_config()
+        qual = _make_valid_qualification_record()
+
+        # Two valid replay reports for the exact same qualification
+        rep_bound = _make_valid_replay_report(
+            strategy_id=qual.strategy_id,
+            qualification_hash=qual.record_hash,
+            max_drawdown_bps=500.0,
+            slippage_bps_per_side=4.0,
+        )
+        rep_unbound = _make_valid_replay_report(
+            strategy_id=qual.strategy_id,
+            qualification_hash=qual.record_hash,
+            max_drawdown_bps=300.0,
+            slippage_bps_per_side=2.0,
+        )
+
+        baseline = PaperEvaluationBaseline.from_replay_report(rep_bound)
+
+        # Snapshot is bound to rep_bound
+        snap = _make_valid_snapshot(
+            config, qual, rep_report=rep_bound, max_drawdown_bps=800.0
+        )
+
+        # Attempting to evaluate with the UNBOUND report must be rejected
+        with pytest.raises(
+            MonitoringProvenanceError,
+            match="is not the explicitly bound baseline",
+        ):
+            detect_degradations(
+                snap, config, qual,
+                baseline_replay_report=rep_unbound,  # WRONG / UNBOUND report
+                baseline=baseline,
+            )
+
+    def test_bound_baseline_accepted(self) -> None:
+        config = _make_valid_config(max_drawdown_expansion_limit=1.5)
+        qual = _make_valid_qualification_record()
+        rep_bound = _make_valid_replay_report(
+            strategy_id=qual.strategy_id,
+            qualification_hash=qual.record_hash,
+            max_drawdown_bps=500.0,
+            slippage_bps_per_side=4.0,
+        )
+        baseline = PaperEvaluationBaseline.from_replay_report(rep_bound)
+        snap = _make_valid_snapshot(
+            config, qual, rep_report=rep_bound, max_drawdown_bps=800.0
+        )
+
+        # Evaluating with the BOUND report succeeds and triggers expected breach
+        events = detect_degradations(
+            snap, config, qual,
+            baseline_replay_report=rep_bound,
+            baseline=baseline,
+        )
+        assert len(events) == 1
+        assert events[0].rule_name == RULE_DD_EXPANSION_CRITICAL
+        assert events[0].threshold_value == 750.0
+
+    def test_changing_bound_baseline_changes_binding_hash(self) -> None:
+        qual = _make_valid_qualification_record()
+        rep1 = _make_valid_replay_report(
+            strategy_id=qual.strategy_id,
+            qualification_hash=qual.record_hash,
+            max_drawdown_bps=500.0,
+        )
+        rep2 = _make_valid_replay_report(
+            strategy_id=qual.strategy_id,
+            qualification_hash=qual.record_hash,
+            max_drawdown_bps=600.0,
+        )
+
+        b1 = PaperEvaluationBaseline.from_replay_report(rep1)
+        b2 = PaperEvaluationBaseline.from_replay_report(rep2)
+
+        assert b1.binding_hash != b2.binding_hash
+        assert b1.baseline_replay_report_hash != b2.baseline_replay_report_hash
+
+    def test_tampered_baseline_report_rejected(self) -> None:
+        config = _make_valid_config()
+        qual = _make_valid_qualification_record()
+        rep = _make_valid_replay_report(
+            strategy_id=qual.strategy_id,
+            qualification_hash=qual.record_hash,
+        )
+        baseline = PaperEvaluationBaseline.from_replay_report(rep)
+        snap = _make_valid_snapshot(config, qual, rep_report=rep)
+
+        # Tamper report gross PnL
+        d = rep.canonical_dict()
+        d["gross_pnl"] = 999999.0
+        tampered_rep = ReplayReport(
+            **{k: v for k, v in rep.__dict__.items() if k != "gross_pnl"},
+            gross_pnl=999999.0,
+        )
+
+        with pytest.raises(
+            MonitoringProvenanceError,
+            match="Baseline ReplayReport digest verification failed",
+        ):
+            detect_degradations(
+                snap, config, qual,
+                baseline_replay_report=tampered_rep,
+                baseline=baseline,
+            )
+
+    def test_wrong_strategy_in_baseline_rejected(self) -> None:
+        config = _make_valid_config()
+        qual = _make_valid_qualification_record()
+        rep = _make_valid_replay_report(
+            strategy_id=qual.strategy_id,
+            qualification_hash=qual.record_hash,
+        )
+        snap = _make_valid_snapshot(config, qual, rep_report=rep)
+
+        # Baseline for another strategy
+        baseline_other = PaperEvaluationBaseline.create(
+            strategy_id="STRAT-OTHER",
+            qualification_hash=qual.record_hash,
+            baseline_replay_report_hash=rep.report_hash,
+            baseline_dataset_version=rep.dataset_version,
+            baseline_dataset_sha256=rep.dataset_sha256,
+        )
+
+        with pytest.raises(
+            MonitoringProvenanceError,
+            match="Baseline binding strategy_id mismatch",
+        ):
+            detect_degradations(
+                snap, config, qual,
+                baseline_replay_report=rep,
+                baseline=baseline_other,
+            )
+
+    def test_wrong_qualification_in_baseline_rejected(self) -> None:
+        config = _make_valid_config()
+        qual = _make_valid_qualification_record()
+        rep = _make_valid_replay_report(
+            strategy_id=qual.strategy_id,
+            qualification_hash=qual.record_hash,
+        )
+        snap = _make_valid_snapshot(config, qual, rep_report=rep)
+
+        baseline_wrong_q = PaperEvaluationBaseline.create(
+            strategy_id=qual.strategy_id,
+            qualification_hash="wrong_qualification_hash_1234",
+            baseline_replay_report_hash=rep.report_hash,
+            baseline_dataset_version=rep.dataset_version,
+            baseline_dataset_sha256=rep.dataset_sha256,
+        )
+
+        with pytest.raises(
+            MonitoringProvenanceError,
+            match="Baseline binding qualification_hash mismatch",
+        ):
+            detect_degradations(
+                snap, config, qual,
+                baseline_replay_report=rep,
+                baseline=baseline_wrong_q,
+            )
+
+    def test_wrong_dataset_in_baseline_rejected(self) -> None:
+        config = _make_valid_config()
+        qual = _make_valid_qualification_record()
+        rep = _make_valid_replay_report(
+            strategy_id=qual.strategy_id,
+            qualification_hash=qual.record_hash,
+        )
+        snap = _make_valid_snapshot(config, qual, rep_report=rep)
+
+        baseline_wrong_ds = PaperEvaluationBaseline.create(
+            strategy_id=qual.strategy_id,
+            qualification_hash=qual.record_hash,
+            baseline_replay_report_hash=rep.report_hash,
+            baseline_dataset_version="DS-DIFFERENT",
+            baseline_dataset_sha256=rep.dataset_sha256,
+        )
+
+        with pytest.raises(
+            MonitoringProvenanceError,
+            match="Baseline binding dataset_version mismatch",
+        ):
+            detect_degradations(
+                snap, config, qual,
+                baseline_replay_report=rep,
+                baseline=baseline_wrong_ds,
+            )
+
+
+# ---------------------------------------------------------------------------
+# 10. Slippage Unit Verification & Two-Sided Trade Audit
+# ---------------------------------------------------------------------------
+
+
+class TestSlippageUnitConsistencyAndTwoSidedTrade:
+    """Exact numerical audit verifying that compute_realized_slippage_bps_from_fills()
+
+    and configured slippage_bps_per_side are expressed in the exact same per-side bps units.
+    """
+
+    def test_two_sided_trade_per_side_bps_mathematical_identity(self) -> None:
+        """Prove that total slippage currency divided by total turnover yields per-side bps."""
+        from quantmind.paper.evaluation.metrics import (
+            compute_realized_slippage_bps,
+            compute_realized_slippage_bps_from_fills,
+        )
+        from quantmind.paper.ledger import PaperFill
+
+        lot_size = 1
+        qty = 100
+        configured_slippage_bps = 5.0  # 5 bps per side = 0.0005
+
+        # Leg 1: Buy order at open = 100.0
+        # fill_price = 100.0 * (1.0 + 0.0005) = 100.05
+        # slippage = (100.05 - 100.0) * 100 = 5.0 currency
+        # turnover = 100.05 * 100 = 10005.0 currency
+        fill_entry = PaperFill(
+            fill_id="FILL-1",
+            order_id="ORD-1",
+            strategy_id="STRAT-M4",
+            symbol="NIFTY",
+            fill_timestamp="2026-03-01T09:15:00Z",
+            fill_price=100.05,
+            quantity=qty,
+            side=1,
+            cost=2.0,
+            slippage=5.0,
+        )
+
+        # Leg 2: Sell order at open = 110.0
+        # fill_price = 110.0 * (1.0 - 0.0005) = 109.945
+        # slippage = (110.0 - 109.945) * 100 = 5.5 currency
+        # turnover = 109.945 * 100 = 10994.5 currency
+        fill_exit = PaperFill(
+            fill_id="FILL-2",
+            order_id="ORD-2",
+            strategy_id="STRAT-M4",
+            symbol="NIFTY",
+            fill_timestamp="2026-03-01T15:30:00Z",
+            fill_price=109.945,
+            quantity=qty,
+            side=-1,
+            cost=2.0,
+            slippage=5.5,
+        )
+
+        # Total slippage currency = 5.0 + 5.5 = 10.5
+        # Total turnover = 10005.0 + 10994.5 = 20999.5
+        realized_bps = compute_realized_slippage_bps_from_fills(
+            [fill_entry, fill_exit], lot_size=lot_size
+        )
+
+        # (10.5 / 20999.5) * 10000 = 5.0001 bps (matches 5.0 bps per-side to 4 decimal places)
+        assert realized_bps == 5.0001
+        assert abs(realized_bps - configured_slippage_bps) < 0.001
+
+    def test_slippage_threshold_equality_and_breach_with_bound_baseline(self) -> None:
+        """Verify detector threshold comparison against bound baseline."""
+        config = _make_valid_config(max_slippage_drift_ratio=1.20)  # 20% drift allowed
+        qual = _make_valid_qualification_record()
+        # Modeled slippage = 5.0 bps per side
+        rep = _make_valid_replay_report(
+            strategy_id=qual.strategy_id,
+            qualification_hash=qual.record_hash,
+            slippage_bps_per_side=5.0,
+        )
+        baseline = PaperEvaluationBaseline.from_replay_report(rep)
+
+        # Threshold = 5.0 * 1.20 = 6.0 bps per side
+        # Case A: Realized = 6.0 bps (exact threshold -> NO event)
+        snap_eq = _make_valid_snapshot(
+            config, qual, rep_report=rep, realized_slippage_bps=6.0
+        )
+        events_eq = detect_degradations(
+            snap_eq, config, qual,
+            baseline_replay_report=rep,
+            baseline=baseline,
+        )
+        assert len(events_eq) == 0
+
+        # Case B: Realized = 6.01 bps (above threshold -> EVENT)
+        snap_breach = _make_valid_snapshot(
+            config, qual, rep_report=rep, realized_slippage_bps=6.01
+        )
+        events_breach = detect_degradations(
+            snap_breach, config, qual,
+            baseline_replay_report=rep,
+            baseline=baseline,
+        )
+        assert len(events_breach) == 1
+        assert events_breach[0].rule_name == RULE_SLIPPAGE_ANOMALY
+        assert events_breach[0].threshold_value == 6.0
+        assert events_breach[0].observed_value == 6.01
+
+
+# ---------------------------------------------------------------------------
+# 11. Baseline Determinism Invariants
+# ---------------------------------------------------------------------------
+
+
+class TestBaselineDeterminismInvariants:
+    def test_same_baseline_binding_produces_identical_detector_output(self) -> None:
+        config = _make_valid_config()
+        qual = _make_valid_qualification_record()
+        rep = _make_valid_replay_report(
+            strategy_id=qual.strategy_id,
+            qualification_hash=qual.record_hash,
+            max_drawdown_bps=500.0,
+            slippage_bps_per_side=4.0,
+        )
+        baseline = PaperEvaluationBaseline.from_replay_report(rep)
+        snap = _make_valid_snapshot(
+            config, qual, rep_report=rep, max_drawdown_bps=800.0, realized_slippage_bps=6.0
+        )
+
+        detector = DegradationDetector(config, baseline=baseline)
+        ev1 = detector.evaluate(snap, qual, baseline_replay_report=rep)
+        ev2 = detector.evaluate(snap, qual, baseline_replay_report=rep)
+
+        assert len(ev1) == len(ev2)
+        for e1, e2 in zip(ev1, ev2):
+            assert e1.canonical_dict() == e2.canonical_dict()
+            assert e1.event_hash == e2.event_hash

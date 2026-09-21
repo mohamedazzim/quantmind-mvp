@@ -47,6 +47,7 @@ from .models import (
     MonitoringConfigError,
     MonitoringProvenanceError,
     MonitoringSnapshot,
+    PaperEvaluationBaseline,
     PaperEvaluationTransition,
     ResearchFeedbackRecord,
 )
@@ -62,6 +63,7 @@ __all__ = [
     "MonitoringConfigError",
     "MonitoringProvenanceError",
     "MonitoringSnapshot",
+    "PaperEvaluationBaseline",
     "PaperEvaluationTransition",
     "RULE_DD_EXPANSION_CRITICAL",
     "RULE_RISK_REJECTION_SPIKE",

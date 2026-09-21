@@ -31,7 +31,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
+
+if TYPE_CHECKING:
+    from quantmind.paper.models import ReplayReport
 
 
 class MonitoringConfigError(ValueError):
@@ -700,4 +703,137 @@ class ResearchFeedbackRecord:
             empirical_notes=empirical_notes,
             created_at=now_ts,
             feedback_hash=digest,
+        )
+
+
+# ---------------------------------------------------------------------------
+# 6. PaperEvaluationBaseline
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PaperEvaluationBaseline:
+    """Immutable binding between a qualified strategy and its authoritative baseline ReplayReport.
+
+    Enforces the essential invariant:
+    ONE qualified strategy + ONE explicitly bound baseline ReplayReport = authoritative monitoring baseline.
+    """
+
+    strategy_id: str
+    qualification_hash: str
+    baseline_replay_report_hash: str
+    baseline_dataset_version: str
+    baseline_dataset_sha256: str
+    baseline_split_zone: str
+    baseline_execution_policy: str
+    baseline_cost_schedule_hash: str
+    baseline_risk_config_hash: str
+    created_at: str
+    binding_hash: str
+
+    def __post_init__(self) -> None:
+        if not self.strategy_id:
+            raise ValueError("strategy_id cannot be empty")
+        if not self.qualification_hash:
+            raise ValueError("qualification_hash cannot be empty")
+        if not self.baseline_replay_report_hash:
+            raise ValueError("baseline_replay_report_hash cannot be empty")
+        if not self.baseline_dataset_version:
+            raise ValueError("baseline_dataset_version cannot be empty")
+        if not self.baseline_dataset_sha256:
+            raise ValueError("baseline_dataset_sha256 cannot be empty")
+        if not self.baseline_split_zone:
+            raise ValueError("baseline_split_zone cannot be empty")
+        if not self.baseline_execution_policy:
+            raise ValueError("baseline_execution_policy cannot be empty")
+
+    def canonical_dict(self) -> dict[str, Any]:
+        """Produce deterministic sorted dictionary of baseline binding parameters."""
+        return {
+            "baseline_cost_schedule_hash": str(self.baseline_cost_schedule_hash),
+            "baseline_dataset_sha256": str(self.baseline_dataset_sha256),
+            "baseline_dataset_version": str(self.baseline_dataset_version),
+            "baseline_execution_policy": str(self.baseline_execution_policy),
+            "baseline_replay_report_hash": str(self.baseline_replay_report_hash),
+            "baseline_risk_config_hash": str(self.baseline_risk_config_hash),
+            "baseline_split_zone": str(self.baseline_split_zone),
+            "qualification_hash": str(self.qualification_hash),
+            "strategy_id": str(self.strategy_id),
+        }
+
+    def canonical_json(self) -> str:
+        """Produce deterministic canonical JSON string."""
+        return json.dumps(self.canonical_dict(), sort_keys=True, separators=(",", ":"))
+
+    def compute_hash(self) -> str:
+        """Compute SHA-256 digest over semantic canonical JSON."""
+        return hashlib.sha256(self.canonical_json().encode("utf-8")).hexdigest()
+
+    def verify_digest(self) -> bool:
+        """Verify that binding_hash matches the computed digest."""
+        return self.binding_hash == self.compute_hash()
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        strategy_id: str,
+        qualification_hash: str,
+        baseline_replay_report_hash: str,
+        baseline_dataset_version: str,
+        baseline_dataset_sha256: str,
+        baseline_split_zone: str = "FORWARD_PAPER",
+        baseline_execution_policy: str = "next_bar_open_v1",
+        baseline_cost_schedule_hash: str = "",
+        baseline_risk_config_hash: str = "",
+        created_at: str | None = None,
+    ) -> PaperEvaluationBaseline:
+        """Factory method to instantiate an immutable PaperEvaluationBaseline with computed hash."""
+        now_ts = created_at or datetime.now(timezone.utc).isoformat()
+        temp = cls(
+            strategy_id=strategy_id,
+            qualification_hash=qualification_hash,
+            baseline_replay_report_hash=baseline_replay_report_hash,
+            baseline_dataset_version=baseline_dataset_version,
+            baseline_dataset_sha256=baseline_dataset_sha256,
+            baseline_split_zone=baseline_split_zone,
+            baseline_execution_policy=baseline_execution_policy,
+            baseline_cost_schedule_hash=baseline_cost_schedule_hash,
+            baseline_risk_config_hash=baseline_risk_config_hash,
+            created_at=now_ts,
+            binding_hash="",
+        )
+        digest = temp.compute_hash()
+        return cls(
+            strategy_id=strategy_id,
+            qualification_hash=qualification_hash,
+            baseline_replay_report_hash=baseline_replay_report_hash,
+            baseline_dataset_version=baseline_dataset_version,
+            baseline_dataset_sha256=baseline_dataset_sha256,
+            baseline_split_zone=baseline_split_zone,
+            baseline_execution_policy=baseline_execution_policy,
+            baseline_cost_schedule_hash=baseline_cost_schedule_hash,
+            baseline_risk_config_hash=baseline_risk_config_hash,
+            created_at=now_ts,
+            binding_hash=digest,
+        )
+
+    @classmethod
+    def from_replay_report(
+        cls,
+        report: ReplayReport,
+        created_at: str | None = None,
+    ) -> PaperEvaluationBaseline:
+        """Construct an authoritative baseline binding directly from a validated ReplayReport."""
+        return cls.create(
+            strategy_id=report.strategy_id,
+            qualification_hash=report.qualification_hash,
+            baseline_replay_report_hash=report.report_hash,
+            baseline_dataset_version=report.dataset_version,
+            baseline_dataset_sha256=report.dataset_sha256,
+            baseline_split_zone=report.split_zone,
+            baseline_execution_policy=report.execution_policy,
+            baseline_cost_schedule_hash=report.cost_schedule_hash,
+            baseline_risk_config_hash=report.risk_config_hash,
+            created_at=created_at or report.created_at,
         )
