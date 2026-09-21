@@ -59,7 +59,7 @@ def _make_valid_snapshot(created_at: str = "2023-06-01T10:00:00Z") -> Monitoring
         max_drawdown_bps=650.0,
         realized_sharpe=1.75,
         realized_slippage_bps=2.1,
-        cost_to_pnl_ratio=15.4,
+        cost_to_turnover_bps=15.4,
         risk_event_count=0,
         metrics_json='{"rolling_sharpe_30d":1.75,"realized_dd_expansion":0.85}',
         created_at=created_at,
@@ -245,7 +245,7 @@ class TestMonitoringSnapshot:
             ("max_drawdown_bps", 1200.0),
             ("realized_sharpe", 0.50),
             ("realized_slippage_bps", 5.0),
-            ("cost_to_pnl_ratio", 99.9),
+            ("cost_to_turnover_bps", 99.9),
             ("risk_event_count", 3),
             ("metrics_json", '{"tampered":true}'),
         ]
@@ -267,7 +267,7 @@ class TestMonitoringSnapshot:
                 "max_drawdown_bps": base.max_drawdown_bps,
                 "realized_sharpe": base.realized_sharpe,
                 "realized_slippage_bps": base.realized_slippage_bps,
-                "cost_to_pnl_ratio": base.cost_to_pnl_ratio,
+                "cost_to_turnover_bps": base.cost_to_turnover_bps,
                 "risk_event_count": base.risk_event_count,
                 "metrics_json": base.metrics_json,
             }
@@ -276,6 +276,17 @@ class TestMonitoringSnapshot:
             assert (
                 mutated.snapshot_hash != base_hash
             ), f"Mutation on {field_name} failed to alter snapshot_hash"
+
+    def test_canonical_field_cost_to_turnover_bps_reconciled(self) -> None:
+        """Explicit regression test proving cost_to_turnover_bps is bound and cost_to_pnl_ratio is removed."""
+        s = _make_valid_snapshot()
+        canonical = s.canonical_dict()
+
+        assert "cost_to_turnover_bps" in canonical
+        assert canonical["cost_to_turnover_bps"] == 15.4
+        assert "cost_to_pnl_ratio" not in canonical
+        assert hasattr(s, "cost_to_turnover_bps")
+        assert not hasattr(s, "cost_to_pnl_ratio")
 
     def test_derived_snapshot_id_is_deterministic(self) -> None:
         s1 = _make_valid_snapshot()

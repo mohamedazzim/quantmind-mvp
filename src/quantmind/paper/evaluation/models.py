@@ -136,7 +136,7 @@ class MonitoringSnapshot:
     max_drawdown_bps: float
     realized_sharpe: float | None
     realized_slippage_bps: float
-    cost_to_pnl_ratio: float
+    cost_to_turnover_bps: float
     risk_event_count: int
     metrics_json: str
     created_at: str
@@ -196,7 +196,7 @@ class MonitoringSnapshot:
         timestamps (created_at) to guarantee temporal determinism across re-evaluations.
         """
         return {
-            "cost_to_pnl_ratio": round(float(self.cost_to_pnl_ratio), 4),
+            "cost_to_turnover_bps": round(float(self.cost_to_turnover_bps), 4),
             "dataset_sha256": str(self.dataset_sha256),
             "dataset_version": str(self.dataset_version),
             "max_drawdown_bps": round(float(self.max_drawdown_bps), 4),
@@ -251,7 +251,7 @@ class MonitoringSnapshot:
         max_drawdown_bps: float,
         realized_sharpe: float | None,
         realized_slippage_bps: float,
-        cost_to_pnl_ratio: float,
+        cost_to_turnover_bps: float,
         risk_event_count: int,
         metrics_json: str,
         created_at: str | None = None,
@@ -274,7 +274,7 @@ class MonitoringSnapshot:
             max_drawdown_bps=max_drawdown_bps,
             realized_sharpe=realized_sharpe,
             realized_slippage_bps=realized_slippage_bps,
-            cost_to_pnl_ratio=cost_to_pnl_ratio,
+            cost_to_turnover_bps=cost_to_turnover_bps,
             risk_event_count=risk_event_count,
             metrics_json=metrics_json,
             created_at=now_ts,
@@ -297,7 +297,7 @@ class MonitoringSnapshot:
             max_drawdown_bps=max_drawdown_bps,
             realized_sharpe=realized_sharpe,
             realized_slippage_bps=realized_slippage_bps,
-            cost_to_pnl_ratio=cost_to_pnl_ratio,
+            cost_to_turnover_bps=cost_to_turnover_bps,
             risk_event_count=risk_event_count,
             metrics_json=metrics_json,
             created_at=now_ts,
