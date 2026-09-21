@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Callable
+import hashlib
+import json
+from typing import Any, Callable
 
 from .strategies import assert_causal_signal
 
@@ -35,6 +37,25 @@ class CostSchedule:
         if len(matches) != 1:
             raise ValueError(f"expected exactly one cost schedule period for {on_date}")
         return matches[0].round_trip_bps
+
+    def canonical_dict(self) -> dict[str, Any]:
+        return {
+            "periods": [
+                {
+                    "effective_from": p.effective_from.isoformat(),
+                    "effective_to": p.effective_to.isoformat() if p.effective_to else None,
+                    "round_trip_bps": round(float(p.round_trip_bps), 6),
+                }
+                for p in sorted(self.periods, key=lambda x: x.effective_from)
+            ],
+            "schedule_id": self.schedule_id,
+        }
+
+    def canonical_json(self) -> str:
+        return json.dumps(self.canonical_dict(), sort_keys=True, separators=(",", ":"))
+
+    def compute_schedule_hash(self) -> str:
+        return hashlib.sha256(self.canonical_json().encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)

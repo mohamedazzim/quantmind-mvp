@@ -205,7 +205,14 @@ class ReplayReport:
     tick_size: float = 0.05
     slippage_bps_per_side: float = 0.0
     cost_schedule_id: str = ""
+    cost_schedule_hash: str = ""
+    risk_config_hash: str = ""
     execution_policy: str = "next_bar_open_v1"
+    quantity: int = 1
+    hold_bars: int = 1
+    initial_capital: float = 100_000.0
+    enforce_session_boundaries: bool = True
+    split_zone: str = "FORWARD_PAPER"
 
     @property
     def total_costs(self) -> float:
@@ -217,24 +224,31 @@ class ReplayReport:
 
     def canonical_dict(self) -> dict[str, Any]:
         return {
+            "cost_schedule_hash": self.cost_schedule_hash,
             "cost_schedule_id": self.cost_schedule_id,
             "costs": round(float(self.costs), 4),
             "dataset_sha256": self.dataset_sha256,
             "dataset_version": self.dataset_version,
+            "enforce_session_boundaries": bool(self.enforce_session_boundaries),
             "execution_policy": self.execution_policy,
             "expectancy": round(float(self.expectancy), 4),
             "exposure": round(float(self.exposure), 4),
             "gross_pnl": round(float(self.gross_pnl), 4),
+            "hold_bars": int(self.hold_bars),
+            "initial_capital": round(float(self.initial_capital), 4),
             "lot_size": int(self.lot_size),
             "max_drawdown_bps": round(float(self.max_drawdown_bps), 4),
             "net_pnl": round(float(self.net_pnl), 4),
             "qualification_hash": self.qualification_hash,
             "qualification_id": self.qualification_id,
+            "quantity": int(self.quantity),
             "research_protocol_version": self.research_protocol_version,
+            "risk_config_hash": self.risk_config_hash,
             "session_breakdown": [s.to_dict() for s in self.session_breakdown],
             "sharpe_ratio": round(float(self.sharpe_ratio), 4) if self.sharpe_ratio is not None else None,
             "slippage": round(float(self.slippage), 4),
             "slippage_bps_per_side": round(float(self.slippage_bps_per_side), 4),
+            "split_zone": self.split_zone,
             "strategy_id": self.strategy_id,
             "strategy_spec_hash": self.strategy_spec_hash,
             "symbol": self.symbol,
@@ -277,7 +291,14 @@ class ReplayReport:
         tick_size: float = 0.05,
         slippage_bps_per_side: float = 0.0,
         cost_schedule_id: str = "",
+        cost_schedule_hash: str = "",
+        risk_config_hash: str = "",
         execution_policy: str = "next_bar_open_v1",
+        quantity: int = 1,
+        hold_bars: int = 1,
+        initial_capital: float = 100_000.0,
+        enforce_session_boundaries: bool = True,
+        split_zone: str = "FORWARD_PAPER",
     ) -> ReplayReport:
         now = created_at or datetime.now(timezone.utc).isoformat()
         temp = cls(
@@ -306,7 +327,14 @@ class ReplayReport:
             tick_size=tick_size,
             slippage_bps_per_side=slippage_bps_per_side,
             cost_schedule_id=cost_schedule_id,
+            cost_schedule_hash=cost_schedule_hash,
+            risk_config_hash=risk_config_hash,
             execution_policy=execution_policy,
+            quantity=quantity,
+            hold_bars=hold_bars,
+            initial_capital=initial_capital,
+            enforce_session_boundaries=enforce_session_boundaries,
+            split_zone=split_zone,
         )
         h = temp.compute_report_hash()
         return cls(
@@ -335,5 +363,12 @@ class ReplayReport:
             tick_size=tick_size,
             slippage_bps_per_side=slippage_bps_per_side,
             cost_schedule_id=cost_schedule_id,
+            cost_schedule_hash=cost_schedule_hash,
+            risk_config_hash=risk_config_hash,
             execution_policy=execution_policy,
+            quantity=quantity,
+            hold_bars=hold_bars,
+            initial_capital=initial_capital,
+            enforce_session_boundaries=enforce_session_boundaries,
+            split_zone=split_zone,
         )

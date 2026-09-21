@@ -66,8 +66,8 @@
   - All paper engine components are strictly simulated.
   - Codebase contains zero broker credentials (API keys, secret keys, access tokens, webhook URLs, external sockets, or live routing mechanisms).
 - **Test Suite Expansion**:
-  - 30 new tests added (27 unit tests across replay feed, execution, risk, security boundaries, and 3 end-to-end integration tests).
-  - Total test suite expanded from **283 passed** to **313 passed** (0 failures, 0 warnings, clean compileall).
+  - 65 new tests added (adversarial suite covering qualification tampering, execution causality, ledger SQL triggers, risk limits, feed validation, and complete provenance closure).
+  - Total test suite expanded from **283 passed** to **348 passed** (0 failures, 0 warnings, clean compileall).
 
 ---
 
@@ -158,10 +158,28 @@ The `PaperRiskEngine` maintains deterministic intra-session portfolio state:
 - Any two executions of `PaperReplayEngine` with identical `StrategyQualificationRecord`, `StrategySpec`, and `ReplayFeed` produce bitwise identical orders, fills, trade lists, and `report_hash`.
 - `ReplayReport.canonical_json()` provides a reproducible, order-invariant representation for SHA-256 verification.
 
-### 4.2 Tamper Resistance & Immutability
+### 4.2 Tamper Resistance, Provenance Closure & Immutability
 - `PaperLedger` rejects both `DELETE` and `UPDATE` SQL queries via SQLite database triggers across all 5 tables: `paper_orders`, `paper_fills`, `paper_risk_events`, `paper_positions`, and `paper_reports`.
 - `paper_reports` enforces primary key uniqueness on `report_hash`, preventing report overwriting or state mutation.
-- `ReplayReport` cryptographically binds complete execution provenance into `report_hash`: `strategy_spec_hash`, `qualification_hash`, `dataset_sha256`, `research_protocol_version`, `symbol`, `lot_size`, `tick_size`, `slippage_bps_per_side`, `cost_schedule_id`, and `execution_policy`.
+- `ReplayReport` cryptographically binds all 17 result-affecting parameters into its canonical representation and `report_hash`:
+  1. `strategy_spec_hash`: SHA-256 of normalized strategy spec
+  2. `qualification_hash`: SHA-256 audit digest of `StrategyQualificationRecord`
+  3. `dataset_version`: Authoritative dataset version string
+  4. `dataset_sha256`: SHA-256 disk checksum of market dataset
+  5. `research_protocol_version`: Governed research protocol version
+  6. `symbol`: Instrument symbol
+  7. `lot_size`: Contract lot multiplier
+  8. `tick_size`: Instrument minimum price increment
+  9. `slippage_bps_per_side`: Slippage applied per side in bps
+  10. `cost_schedule_id`: Identifier of applied transaction fee schedule
+  11. `cost_schedule_hash`: SHA-256 over canonical schedule periods and rates
+  12. `risk_config_hash`: SHA-256 over canonical risk limit parameters
+  13. `execution_policy`: Locked execution model identifier (`next_bar_open_v1`)
+  14. `quantity`: Order size in contracts
+  15. `hold_bars`: Trade holding horizon in bars
+  16. `initial_capital`: Replay capital base in currency units
+  17. `enforce_session_boundaries`: Boolean flag controlling intra-day liquidation
+  18. `split_zone`: Authoritative dataset split partition (`FORWARD_PAPER`)
 - Replay engine rejects any qualification record where `record.verify_digest()` fails.
 - `ReplayFeed` enforces strict preflight validation: rejects empty datasets, missing columns, NaNs, infinities, non-monotonic or duplicate timestamps, non-positive prices, and invalid OHLC bounds (`high < low`, `high < open`, etc.). Disk checksums are verified against the registry via SHA-256 before loading.
 - `PaperRiskEngine` scales exposure calculations by contract `lot_size` ($Q \times P \times \text{lot\_size}$) and guarantees risk-reducing liquidation orders cannot be trapped if drawdown or loss thresholds are breached.

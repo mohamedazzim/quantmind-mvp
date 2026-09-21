@@ -178,6 +178,12 @@ class PaperReplayEngine:
         # 6. Compile strategy signal function
         signal_fn = compile_strategy_spec(norm_spec)
 
+        # Compute schedule and risk configuration hashes for cryptographic provenance
+        cost_sched_id = self.cost_schedule.schedule_id if self.cost_schedule else ""
+        cost_sched_hash = self.cost_schedule.compute_schedule_hash() if self.cost_schedule else ""
+        risk_hash = self.risk_engine.config.compute_config_hash()
+        split_z = feed.split_zone
+
         # Extract all bars for strategy signal generation
         feed.reset()
         bars: list[ReplayBar] = list(feed.stream_bars())
@@ -205,8 +211,15 @@ class PaperReplayEngine:
                 lot_size=feed.lot_size,
                 tick_size=feed.tick_size,
                 slippage_bps_per_side=self.slippage_bps_per_side,
-                cost_schedule_id=self.cost_schedule.schedule_id if self.cost_schedule else "",
+                cost_schedule_id=cost_sched_id,
+                cost_schedule_hash=cost_sched_hash,
+                risk_config_hash=risk_hash,
                 execution_policy="next_bar_open_v1",
+                quantity=quantity,
+                hold_bars=hold_bars,
+                initial_capital=initial_capital,
+                enforce_session_boundaries=self.enforce_session_boundaries,
+                split_zone=split_z,
             )
 
         df = pd.DataFrame(
@@ -501,8 +514,15 @@ class PaperReplayEngine:
             lot_size=feed.lot_size,
             tick_size=feed.tick_size,
             slippage_bps_per_side=self.slippage_bps_per_side,
-            cost_schedule_id=self.cost_schedule.schedule_id if self.cost_schedule else "",
+            cost_schedule_id=cost_sched_id,
+            cost_schedule_hash=cost_sched_hash,
+            risk_config_hash=risk_hash,
             execution_policy="next_bar_open_v1",
+            quantity=quantity,
+            hold_bars=hold_bars,
+            initial_capital=initial_capital,
+            enforce_session_boundaries=self.enforce_session_boundaries,
+            split_zone=split_z,
         )
 
         self.ledger.record_report(report)

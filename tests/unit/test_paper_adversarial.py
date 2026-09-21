@@ -515,7 +515,14 @@ class TestReplayDeterminismAndProvenance:
             "tick_size",
             "slippage_bps_per_side",
             "cost_schedule_id",
+            "cost_schedule_hash",
+            "risk_config_hash",
             "execution_policy",
+            "quantity",
+            "hold_bars",
+            "initial_capital",
+            "enforce_session_boundaries",
+            "split_zone",
         }
         for key in expected_keys:
             assert key in canon, f"Missing provenance key '{key}' in report canonical_dict"
@@ -807,3 +814,239 @@ class TestDataFeedSecurityAdversarial:
 
         with pytest.raises(DatasetRegistryError, match="dataset checksum mismatch"):
             ReplayFeed.from_dataset_registry(registry, "v1")
+
+
+# ==============================================================================
+# PHASE 14: PROVENANCE CLOSURE ADVERSARIAL AUDIT
+# ==============================================================================
+
+
+class TestProvenanceClosureAdversarial:
+    def test_tampering_risk_config_changes_identity(self) -> None:
+        """Modifying risk configuration alters risk_config_hash and report_hash."""
+        spec = _make_spec()
+        record = _make_valid_record(spec)
+        feed1 = _make_clean_feed(n=10)
+        feed2 = _make_clean_feed(n=10)
+
+        engine1 = PaperReplayEngine(risk_config=PaperRiskConfig(max_position=10))
+        engine2 = PaperReplayEngine(risk_config=PaperRiskConfig(max_position=5))
+
+        report1 = engine1.run_replay(record, spec, feed1)
+        report2 = engine2.run_replay(record, spec, feed2)
+
+        assert report1.risk_config_hash != report2.risk_config_hash
+        assert report1.report_hash != report2.report_hash
+
+    def test_tampering_cost_schedule_changes_identity(self) -> None:
+        """Modifying cost schedule definition under the same schedule_id changes report_hash."""
+        spec = _make_spec()
+        record = _make_valid_record(spec)
+        feed1 = _make_clean_feed(n=10)
+        feed2 = _make_clean_feed(n=10)
+
+        sched1 = CostSchedule(
+            schedule_id="SCHED-SAME-ID",
+            periods=(
+                CostSchedulePeriod(
+                    effective_from=date(2020, 1, 1),
+                    effective_to=None,
+                    round_trip_bps=10.0,
+                ),
+            ),
+        )
+        sched2 = CostSchedule(
+            schedule_id="SCHED-SAME-ID",
+            periods=(
+                CostSchedulePeriod(
+                    effective_from=date(2020, 1, 1),
+                    effective_to=None,
+                    round_trip_bps=20.0,
+                ),
+            ),
+        )
+
+        engine1 = PaperReplayEngine(cost_schedule=sched1)
+        engine2 = PaperReplayEngine(cost_schedule=sched2)
+
+        report1 = engine1.run_replay(record, spec, feed1)
+        report2 = engine2.run_replay(record, spec, feed2)
+
+        assert report1.cost_schedule_id == report2.cost_schedule_id
+        assert report1.cost_schedule_hash != report2.cost_schedule_hash
+        assert report1.report_hash != report2.report_hash
+
+    def test_changing_quantity_changes_identity(self) -> None:
+        """Changing replay order quantity alters report_hash."""
+        spec = _make_spec()
+        record = _make_valid_record(spec)
+        feed1 = _make_clean_feed(n=10)
+        feed2 = _make_clean_feed(n=10)
+        engine1 = PaperReplayEngine()
+        engine2 = PaperReplayEngine()
+
+        report1 = engine1.run_replay(record, spec, feed1, quantity=1)
+        report2 = engine2.run_replay(record, spec, feed2, quantity=2)
+
+        assert report1.quantity != report2.quantity
+        assert report1.report_hash != report2.report_hash
+
+    def test_changing_hold_bars_changes_identity(self) -> None:
+        """Changing replay hold_bars alters report_hash."""
+        spec = _make_spec()
+        record = _make_valid_record(spec)
+        feed1 = _make_clean_feed(n=10)
+        feed2 = _make_clean_feed(n=10)
+        engine1 = PaperReplayEngine()
+        engine2 = PaperReplayEngine()
+
+        report1 = engine1.run_replay(record, spec, feed1, hold_bars=1)
+        report2 = engine2.run_replay(record, spec, feed2, hold_bars=3)
+
+        assert report1.hold_bars != report2.hold_bars
+        assert report1.report_hash != report2.report_hash
+
+    def test_changing_session_boundary_behavior_changes_identity(self) -> None:
+        """Changing enforce_session_boundaries alters report_hash."""
+        spec = _make_spec()
+        record = _make_valid_record(spec)
+        feed1 = _make_clean_feed(n=10)
+        feed2 = _make_clean_feed(n=10)
+
+        engine1 = PaperReplayEngine(enforce_session_boundaries=True)
+        engine2 = PaperReplayEngine(enforce_session_boundaries=False)
+
+        report1 = engine1.run_replay(record, spec, feed1)
+        report2 = engine2.run_replay(record, spec, feed2)
+
+        assert report1.enforce_session_boundaries != report2.enforce_session_boundaries
+        assert report1.report_hash != report2.report_hash
+
+    def test_changing_execution_policy_changes_identity(self) -> None:
+        """Changing execution policy alters report_hash."""
+        report1 = ReplayReport.create(
+            strategy_id="STRAT-1",
+            qualification_id="QUAL-1",
+            dataset_version="DS-1",
+            trade_count=0,
+            gross_pnl=0.0,
+            net_pnl=0.0,
+            costs=0.0,
+            slippage=0.0,
+            max_drawdown_bps=0.0,
+            exposure=0.0,
+            win_rate=0.0,
+            expectancy=0.0,
+            sharpe_ratio=None,
+            session_breakdown=[],
+            execution_policy="next_bar_open_v1",
+        )
+        report2 = ReplayReport.create(
+            strategy_id="STRAT-1",
+            qualification_id="QUAL-1",
+            dataset_version="DS-1",
+            trade_count=0,
+            gross_pnl=0.0,
+            net_pnl=0.0,
+            costs=0.0,
+            slippage=0.0,
+            max_drawdown_bps=0.0,
+            exposure=0.0,
+            win_rate=0.0,
+            expectancy=0.0,
+            sharpe_ratio=None,
+            session_breakdown=[],
+            execution_policy="next_bar_open_v2",
+        )
+        assert report1.execution_policy != report2.execution_policy
+        assert report1.report_hash != report2.report_hash
+
+    def test_changing_slippage_changes_identity(self) -> None:
+        """Changing slippage_bps_per_side alters report_hash."""
+        spec = _make_spec()
+        record = _make_valid_record(spec)
+        feed1 = _make_clean_feed(n=10)
+        feed2 = _make_clean_feed(n=10)
+
+        engine1 = PaperReplayEngine(slippage_bps_per_side=0.0)
+        engine2 = PaperReplayEngine(slippage_bps_per_side=5.0)
+
+        report1 = engine1.run_replay(record, spec, feed1)
+        report2 = engine2.run_replay(record, spec, feed2)
+
+        assert report1.slippage_bps_per_side != report2.slippage_bps_per_side
+        assert report1.report_hash != report2.report_hash
+
+    def test_changing_tick_size_changes_identity(self) -> None:
+        """Changing instrument tick_size alters report_hash."""
+        spec = _make_spec()
+        record = _make_valid_record(spec)
+        feed1 = _make_clean_feed(n=10, tick_size=0.05)
+        feed2 = _make_clean_feed(n=10, tick_size=0.10)
+        engine1 = PaperReplayEngine()
+        engine2 = PaperReplayEngine()
+
+        report1 = engine1.run_replay(record, spec, feed1)
+        report2 = engine2.run_replay(record, spec, feed2)
+
+        assert report1.tick_size != report2.tick_size
+        assert report1.report_hash != report2.report_hash
+
+    def test_changing_lot_size_changes_identity(self) -> None:
+        """Changing contract lot_size alters report_hash."""
+        spec = _make_spec()
+        record = _make_valid_record(spec)
+        feed1 = _make_clean_feed(n=10, lot_size=50)
+        feed2 = _make_clean_feed(n=10, lot_size=25)
+        engine1 = PaperReplayEngine()
+        engine2 = PaperReplayEngine()
+
+        report1 = engine1.run_replay(record, spec, feed1)
+        report2 = engine2.run_replay(record, spec, feed2)
+
+        assert report1.lot_size != report2.lot_size
+        assert report1.report_hash != report2.report_hash
+
+    def test_changing_dataset_checksum_changes_identity(self) -> None:
+        """Changing dataset_sha256 alters report_hash."""
+        spec = _make_spec()
+        record1 = _make_valid_record(spec, dataset_sha256="dsha-alpha-1111")
+        record2 = _make_valid_record(spec, dataset_sha256="dsha-beta-2222")
+        feed1 = _make_clean_feed(n=10)
+        feed2 = _make_clean_feed(n=10)
+        engine1 = PaperReplayEngine()
+        engine2 = PaperReplayEngine()
+
+        report1 = engine1.run_replay(record1, spec, feed1)
+        report2 = engine2.run_replay(record2, spec, feed2)
+
+        assert report1.dataset_sha256 != report2.dataset_sha256
+        assert report1.report_hash != report2.report_hash
+
+    def test_changing_initial_capital_changes_identity(self) -> None:
+        """Changing initial_capital alters max_drawdown_bps and report_hash."""
+        spec = _make_spec()
+        record = _make_valid_record(spec)
+        feed1 = _make_clean_feed(n=10)
+        feed2 = _make_clean_feed(n=10)
+        engine1 = PaperReplayEngine()
+        engine2 = PaperReplayEngine()
+
+        report1 = engine1.run_replay(record, spec, feed1, initial_capital=100_000.0)
+        report2 = engine2.run_replay(record, spec, feed2, initial_capital=500_000.0)
+
+        assert report1.initial_capital != report2.initial_capital
+        assert report1.report_hash != report2.report_hash
+
+    def test_report_provenance_is_immutable_after_creation(self) -> None:
+        """ReplayReport is a frozen dataclass; attempting to mutate any attribute raises FrozenInstanceError."""
+        import dataclasses
+
+        spec = _make_spec()
+        record = _make_valid_record(spec)
+        feed = _make_clean_feed(n=10)
+        engine = PaperReplayEngine()
+
+        report = engine.run_replay(record, spec, feed)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            report.quantity = 99  # type: ignore

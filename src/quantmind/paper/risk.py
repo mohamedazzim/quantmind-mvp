@@ -7,8 +7,9 @@ logging any breaches as auditable PaperRiskEvents.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import uuid
-from typing import Mapping
+import hashlib
+import json
+from typing import Any, Mapping
 
 from quantmind.paper.models import PaperOrder, PaperPosition, PaperRiskEvent
 
@@ -38,6 +39,23 @@ class PaperRiskConfig:
             raise ValueError(f"max_exposure must be positive, got {self.max_exposure}")
         if self.max_trades_per_session <= 0:
             raise ValueError(f"max_trades_per_session must be positive, got {self.max_trades_per_session}")
+
+    def canonical_dict(self) -> dict[str, Any]:
+        return {
+            "kill_switch": bool(self.kill_switch),
+            "max_daily_loss": round(float(self.max_daily_loss), 4),
+            "max_exposure": round(float(self.max_exposure), 4),
+            "max_order_quantity": int(self.max_order_quantity),
+            "max_position": int(self.max_position),
+            "max_strategy_drawdown": round(float(self.max_strategy_drawdown), 4),
+            "max_trades_per_session": int(self.max_trades_per_session),
+        }
+
+    def canonical_json(self) -> str:
+        return json.dumps(self.canonical_dict(), sort_keys=True, separators=(",", ":"))
+
+    def compute_config_hash(self) -> str:
+        return hashlib.sha256(self.canonical_json().encode("utf-8")).hexdigest()
 
 
 class PaperRiskEngine:
