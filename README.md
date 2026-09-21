@@ -4,13 +4,13 @@ Futures-first AI-assisted quantitative research laboratory.
 
 ## Current build stage
 
-**Stage 1: deterministic backtester + synthetic research-integrity harness + split/holdout manager + statistical validation (EICT + DSR) + strategy validation gate + deterministic paper replay engine (v3.9)**
+**Stage: QuantMind PRD v4.0 — Full Four-Quadrant Research, Evaluation, Governance & Feedback Architecture**
 
-Current verification: **313 tests passing** across synthetic market generation, real gap/wick semantics, cross-session surrogates, directional intraday nulls, recomputable causal positive controls, independent wick preservation, paired edge recovery, one-sided confidence-bound gates, look-ahead canary, checksum-verified Dataset Registry, immutable SplitManifest, purge and embargo boundaries, sealed final holdout security, holdout state machine, comprehensive adversarial integrity tests, immutable OOS return Parquet artifacts, SHA-256 byte verification, production population accounting, EICT-CORR-1 hierarchical clustering, Deflated Sharpe Ratio multiple-testing adjustment (Bailey & López de Prado 2014), permutation-invariant clustering, multiple-testing anti-bypass guards, deterministic Strategy Validation Gate, immutable Strategy Qualification Records with canonical SHA-256 digests, append-only SQLite qualification ledger triggers, Strategy Registry lifecycle state machine, normalized MarketDataFeed streaming, deterministic PaperReplayEngine execution, pre-trade risk controls, append-only PaperLedger, and deterministic SHA-256 ReplayReport verification.
+Current verification: **732 tests passing** across synthetic market generation, real gap/wick semantics, cross-session surrogates, directional intraday nulls, recomputable causal positive controls, independent wick preservation, paired edge recovery, one-sided confidence-bound gates, look-ahead canary, checksum-verified Dataset Registry, immutable SplitManifest, purge and embargo boundaries, sealed final holdout security, holdout state machine, comprehensive adversarial integrity tests, immutable OOS return Parquet artifacts, SHA-256 byte verification, production population accounting, EICT-CORR-1 hierarchical clustering, Deflated Sharpe Ratio multiple-testing adjustment (Bailey & López de Prado 2014), permutation-invariant clustering, multiple-testing anti-bypass guards, deterministic Strategy Validation Gate, immutable Strategy Qualification Records with canonical SHA-256 digests, append-only SQLite qualification ledger triggers, Strategy Registry lifecycle state machine, normalized MarketDataFeed streaming, deterministic PaperReplayEngine execution, pre-trade risk controls, append-only PaperLedger, deterministic SHA-256 ReplayReport verification, append-only EvaluationLedger (6 tables with trigger immutability), PaperEvaluationBaseline & Regime registration, periodic MonitoringSnapshots, DegradationEvent detection, PaperGovernanceService lifecycle state machine with causal ordering and flat retirement guards, ResearchFeedbackRecord post-mortem capture, zero-trial ResearchFeedbackBridge, and full 26-scenario cross-milestone adversarial verification.
 
-The synthetic harness is intentionally a research fixture, not a market model. Its purpose is to make the deterministic backtest and research-integrity layers falsifiable before any paid historical market data is purchased or frozen.
+See [docs/PRD_v4.0.md](docs/PRD_v4.0.md) for the complete PRD v4.0 architectural specification and closure record.
 
-## First milestones
+## Milestones (PRD v4.0 Complete)
 
 1. Core domain models
 2. Synthetic futures-bar generator
@@ -28,7 +28,10 @@ The synthetic harness is intentionally a research fixture, not a market model. I
 14. Statistical validation: EICT-CORR-1 + Deflated Sharpe Ratio (v3.7 / v3.7.1)
 15. Strategy Validation Gate + Immutable Qualification Record (v3.8)
 16. Deterministic Paper Replay Engine + Normalized Replay Feed + Pre-Trade Risk Controls (v3.9)
-17. Bounded research agents
+17. Paper Evaluation Ledger, Baselines, Regimes & Monitoring Snapshots (PRD v4.0 M5.3)
+18. Paper Evaluation State Machine, Lifecycle Execution Gating & Governance (PRD v4.0 M6)
+19. Research Feedback Bridge & Observational Post-Mortem Records (PRD v4.0 M7)
+20. Final Documentation & Comprehensive Cross-Milestone Adversarial Verification (PRD v4.0 M8)
 
 
 ## Production Research Architecture
