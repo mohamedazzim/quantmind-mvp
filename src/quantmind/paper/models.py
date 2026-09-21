@@ -213,6 +213,7 @@ class ReplayReport:
     initial_capital: float = 100_000.0
     enforce_session_boundaries: bool = True
     split_zone: str = "FORWARD_PAPER"
+    bars_sha256: str = ""
 
     @property
     def total_costs(self) -> float:
@@ -224,6 +225,7 @@ class ReplayReport:
 
     def canonical_dict(self) -> dict[str, Any]:
         return {
+            "bars_sha256": self.bars_sha256,
             "cost_schedule_hash": self.cost_schedule_hash,
             "cost_schedule_id": self.cost_schedule_id,
             "costs": round(float(self.costs), 4),
@@ -299,6 +301,7 @@ class ReplayReport:
         initial_capital: float = 100_000.0,
         enforce_session_boundaries: bool = True,
         split_zone: str = "FORWARD_PAPER",
+        bars_sha256: str = "",
     ) -> ReplayReport:
         now = created_at or datetime.now(timezone.utc).isoformat()
         temp = cls(
@@ -335,6 +338,7 @@ class ReplayReport:
             initial_capital=initial_capital,
             enforce_session_boundaries=enforce_session_boundaries,
             split_zone=split_zone,
+            bars_sha256=bars_sha256,
         )
         h = temp.compute_report_hash()
         return cls(
@@ -371,4 +375,5 @@ class ReplayReport:
             initial_capital=initial_capital,
             enforce_session_boundaries=enforce_session_boundaries,
             split_zone=split_zone,
+            bars_sha256=bars_sha256,
         )

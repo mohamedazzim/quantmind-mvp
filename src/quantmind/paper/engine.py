@@ -89,18 +89,18 @@ class PaperReplayEngine:
         quantity: int = 1,
         hold_bars: int = 1,
     ) -> ReplayReport:
-        # 0. Strict type verification (fail closed against fake/duck-typed objects)
-        if not isinstance(qualification_record, StrategyQualificationRecord):
+        # 0. Strict type verification (fail closed against fake/duck-typed objects or subclass hijacks)
+        if type(qualification_record) is not StrategyQualificationRecord:
             raise PaperReplaySecurityError(
-                f"qualification_record must be an instance of StrategyQualificationRecord, got {type(qualification_record)}"
+                f"qualification_record must be an instance of StrategyQualificationRecord (exact type required), got {type(qualification_record)}"
             )
-        if not isinstance(strategy_spec, StrategySpec):
+        if type(strategy_spec) is not StrategySpec:
             raise PaperReplaySecurityError(
-                f"strategy_spec must be an instance of StrategySpec, got {type(strategy_spec)}"
+                f"strategy_spec must be an instance of StrategySpec (exact type required), got {type(strategy_spec)}"
             )
-        if not isinstance(feed, ReplayFeed):
+        if type(feed) is not ReplayFeed:
             raise PaperReplaySecurityError(
-                f"feed must be an instance of ReplayFeed, got {type(feed)}"
+                f"feed must be an instance of ReplayFeed (exact type required), got {type(feed)}"
             )
 
         # 1. Authoritative qualification verification
@@ -170,6 +170,16 @@ class PaperReplayEngine:
                     f"Dataset '{qualification_record.dataset_version}' is kind '{reg_entry.kind.value}'; "
                     "synthetic/fixture datasets are barred from production paper replay"
                 )
+            if not feed.is_authoritative:
+                raise PaperReplaySecurityError(
+                    f"Production replay against registered dataset '{feed.dataset_version}' requires an authoritative "
+                    "ReplayFeed instantiated via ReplayFeed.from_dataset_registry()"
+                )
+            if feed.dataset_sha256 != qualification_record.dataset_sha256:
+                raise PaperReplaySecurityError(
+                    f"ReplayFeed dataset_sha256 '{feed.dataset_sha256}' does not match "
+                    f"qualification record dataset_sha256 '{qualification_record.dataset_sha256}'"
+                )
 
         # 5. Prohibit sealed holdout access
         if feed.split_zone == SplitZone.FINAL_HOLDOUT.value:
@@ -220,6 +230,7 @@ class PaperReplayEngine:
                 initial_capital=initial_capital,
                 enforce_session_boundaries=self.enforce_session_boundaries,
                 split_zone=split_z,
+                bars_sha256=feed.bars_sha256,
             )
 
         df = pd.DataFrame(
@@ -523,6 +534,7 @@ class PaperReplayEngine:
             initial_capital=initial_capital,
             enforce_session_boundaries=self.enforce_session_boundaries,
             split_zone=split_z,
+            bars_sha256=feed.bars_sha256,
         )
 
         self.ledger.record_report(report)

@@ -13,6 +13,7 @@ Validates:
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import date
 import hashlib
 from pathlib import Path
@@ -523,6 +524,7 @@ class TestReplayDeterminismAndProvenance:
             "initial_capital",
             "enforce_session_boundaries",
             "split_zone",
+            "bars_sha256",
         }
         for key in expected_keys:
             assert key in canon, f"Missing provenance key '{key}' in report canonical_dict"
@@ -1050,3 +1052,262 @@ class TestProvenanceClosureAdversarial:
         report = engine.run_replay(record, spec, feed)
         with pytest.raises(dataclasses.FrozenInstanceError):
             report.quantity = 99  # type: ignore
+
+
+class TestReplayBoundaryAndFeedHardeningAdversarial:
+    """Hostile security audit tests for authoritative feeds, buffer immutability, and boundary closures."""
+
+    def test_subclass_feed_rejected(self) -> None:
+        """Subclassing ReplayFeed to hijack streaming or bypass zone checks is rejected."""
+        spec = _make_spec()
+        record = _make_valid_record(spec)
+
+        class MaliciousReplayFeed(ReplayFeed):
+            @property
+            def split_zone(self) -> str:
+                return "FORWARD_PAPER"
+
+        raw_df = pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2023-01-01 09:15", periods=5, freq="1min"),
+                "open": [100.0] * 5,
+                "high": [101.0] * 5,
+                "low": [99.0] * 5,
+                "close": [100.5] * 5,
+            }
+        )
+        feed = MaliciousReplayFeed(raw_df, dataset_version=record.dataset_version)
+        engine = PaperReplayEngine()
+
+        with pytest.raises(PaperReplaySecurityError, match="must be an instance of ReplayFeed \\(exact type required\\)"):
+            engine.run_replay(record, spec, feed)
+
+    def test_subclass_qualification_record_and_spec_rejected(self) -> None:
+        """Subclassing StrategyQualificationRecord or StrategySpec is rejected."""
+        spec = _make_spec()
+        record = _make_valid_record(spec)
+        feed = _make_clean_feed(n=10)
+        engine = PaperReplayEngine()
+
+        class MaliciousSpec(StrategySpec):
+            pass
+
+        class MaliciousRecord(StrategyQualificationRecord):
+            pass
+
+        bad_spec = MaliciousSpec("v1", "f1", "current_bar_momentum", spec.parameters)
+        with pytest.raises(PaperReplaySecurityError, match="strategy_spec must be an instance of StrategySpec \\(exact type required\\)"):
+            engine.run_replay(record, bad_spec, feed)
+
+        bad_rec = MaliciousRecord(**dataclasses.asdict(record))
+        with pytest.raises(PaperReplaySecurityError, match="qualification_record must be an instance of StrategyQualificationRecord \\(exact type required\\)"):
+            engine.run_replay(bad_rec, spec, feed)
+
+    def test_feed_in_place_numpy_buffer_mutation_blocked(self) -> None:
+        """Underlying columnar NumPy arrays are read-only; in-place mutations fail closed."""
+        feed = _make_clean_feed(n=10)
+
+        with pytest.raises(ValueError, match="read-only"):
+            feed._opens[0] = 99999.0
+
+        with pytest.raises(ValueError, match="read-only"):
+            feed._highs[0] = 99999.0
+
+        with pytest.raises(ValueError, match="read-only"):
+            feed._lows[0] = 99999.0
+
+        with pytest.raises(ValueError, match="read-only"):
+            feed._closes[0] = 99999.0
+
+        with pytest.raises(ValueError, match="read-only"):
+            feed._volumes[0] = 99999.0
+
+        with pytest.raises(ValueError, match="read-only"):
+            feed._open_interests[0] = 99999.0
+
+        with pytest.raises(ValueError, match="read-only"):
+            feed._timestamps[0] = feed._timestamps[1]
+
+        with pytest.raises(ValueError, match="read-only"):
+            feed._session_ids[0] = "2099-01-01"
+
+    def test_direct_constructor_feed_rejected_against_registered_dataset(self, tmp_path) -> None:
+        """Passing an unverified in-memory ReplayFeed against a registered dataset is rejected."""
+        db_path = tmp_path / "reg.db"
+        data_csv = tmp_path / "licensed.csv"
+        df = pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2023-01-01 09:15", periods=10, freq="1min"),
+                "open": [100.0] * 10,
+                "high": [101.0] * 10,
+                "low": [99.0] * 10,
+                "close": [100.5] * 10,
+            }
+        )
+        df.to_csv(data_csv, index=False)
+
+        registry = DatasetRegistry(db_path)
+        rec = registry.register_file(
+            version="DS-LIC-2023",
+            kind=DatasetKind.LICENSED,
+            path=data_csv,
+            timestamp_column="timestamp",
+        )
+
+        spec = _make_spec()
+        record = _make_valid_record(spec, dataset_version="DS-LIC-2023", dataset_sha256=rec.sha256)
+
+        # Unverified direct feed
+        unverified_feed = ReplayFeed(df, dataset_version="DS-LIC-2023")
+        assert not unverified_feed.is_authoritative
+        assert unverified_feed.dataset_sha256 == ""
+
+        engine = PaperReplayEngine(dataset_registry=registry)
+        with pytest.raises(
+            PaperReplaySecurityError,
+            match="requires an authoritative ReplayFeed instantiated via ReplayFeed.from_dataset_registry",
+        ):
+            engine.run_replay(record, spec, unverified_feed)
+
+    def test_authoritative_feed_passes_and_verifies(self, tmp_path) -> None:
+        """Feed loaded via from_dataset_registry is authoritative and executes replay."""
+        db_path = tmp_path / "reg.db"
+        data_csv = tmp_path / "licensed.csv"
+        df = pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2023-01-01 09:15", periods=10, freq="1min"),
+                "open": [100.0] * 10,
+                "high": [101.0] * 10,
+                "low": [99.0] * 10,
+                "close": [100.5] * 10,
+            }
+        )
+        df.to_csv(data_csv, index=False)
+
+        registry = DatasetRegistry(db_path)
+        rec = registry.register_file(
+            version="DS-LIC-2023",
+            kind=DatasetKind.LICENSED,
+            path=data_csv,
+            timestamp_column="timestamp",
+        )
+
+        spec = _make_spec()
+        record = _make_valid_record(spec, dataset_version="DS-LIC-2023", dataset_sha256=rec.sha256)
+
+        auth_feed = ReplayFeed.from_dataset_registry(registry, "DS-LIC-2023")
+        assert auth_feed.is_authoritative
+        assert auth_feed.dataset_sha256 == rec.sha256
+
+        engine = PaperReplayEngine(dataset_registry=registry)
+        report = engine.run_replay(record, spec, auth_feed)
+        assert report.dataset_sha256 == rec.sha256
+        assert report.bars_sha256 == auth_feed.bars_sha256
+        assert len(report.bars_sha256) == 64
+
+    def test_authoritative_feed_dataset_sha256_mismatch_rejected(self, tmp_path) -> None:
+        """Authoritative feed with mismatched dataset_sha256 is rejected by PaperReplayEngine."""
+        db_path = tmp_path / "reg.db"
+        data_csv = tmp_path / "licensed.csv"
+        df = pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2023-01-01 09:15", periods=10, freq="1min"),
+                "open": [100.0] * 10,
+                "high": [101.0] * 10,
+                "low": [99.0] * 10,
+                "close": [100.5] * 10,
+            }
+        )
+        df.to_csv(data_csv, index=False)
+
+        registry = DatasetRegistry(db_path)
+        rec = registry.register_file(
+            version="DS-LIC-2023",
+            kind=DatasetKind.LICENSED,
+            path=data_csv,
+            timestamp_column="timestamp",
+        )
+
+        spec = _make_spec()
+        record = _make_valid_record(spec, dataset_version="DS-LIC-2023", dataset_sha256=rec.sha256)
+
+        auth_feed = ReplayFeed.from_dataset_registry(registry, "DS-LIC-2023")
+        # Tamper with feed's internal dataset_sha256
+        auth_feed._dataset_sha256 = "forged-dataset-sha256"
+
+        engine = PaperReplayEngine(dataset_registry=registry)
+        with pytest.raises(PaperReplaySecurityError, match="ReplayFeed dataset_sha256 .* does not match"):
+            engine.run_replay(record, spec, auth_feed)
+
+    def test_changing_feed_bars_changes_report_hash(self) -> None:
+        """Altering bar data changes bars_sha256 and report_hash even when all metadata is identical."""
+        spec = _make_spec()
+        record = _make_valid_record(spec)
+
+        df1 = pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2023-01-01 09:15", periods=5, freq="1min"),
+                "open": [100.0, 101.0, 102.0, 103.0, 104.0],
+                "high": [102.0, 103.0, 104.0, 105.0, 106.0],
+                "low": [99.0, 100.0, 101.0, 102.0, 103.0],
+                "close": [101.0, 102.0, 103.0, 104.0, 105.0],
+            }
+        )
+        df2 = df1.copy()
+        df2.loc[4, "close"] = 105.5  # Modifying close of last bar
+
+        feed1 = ReplayFeed(df1, dataset_version=record.dataset_version)
+        feed2 = ReplayFeed(df2, dataset_version=record.dataset_version)
+
+        assert feed1.bars_sha256 != feed2.bars_sha256
+
+        engine1 = PaperReplayEngine()
+        engine2 = PaperReplayEngine()
+
+        report1 = engine1.run_replay(record, spec, feed1)
+        report2 = engine2.run_replay(record, spec, feed2)
+
+        assert report1.bars_sha256 == feed1.bars_sha256
+        assert report2.bars_sha256 == feed2.bars_sha256
+        assert report1.report_hash != report2.report_hash
+
+    def test_sealed_final_holdout_access_barred_at_all_layers(self, tmp_path) -> None:
+        """FINAL_HOLDOUT access is prevented in constructor, registry loader, and replay engine."""
+        df = pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2023-01-01 09:15", periods=5, freq="1min"),
+                "open": [100.0] * 5,
+                "high": [101.0] * 5,
+                "low": [99.0] * 5,
+                "close": [100.5] * 5,
+            }
+        )
+
+        # 1. Direct constructor
+        with pytest.raises(MarketFeedSecurityError, match="sealed FINAL_HOLDOUT zone"):
+            ReplayFeed(df, split_zone=SplitZone.FINAL_HOLDOUT)
+
+        # 2. from_dataset_registry
+        db_path = tmp_path / "reg.db"
+        data_csv = tmp_path / "data.csv"
+        df.to_csv(data_csv, index=False)
+        registry = DatasetRegistry(db_path)
+        registry.register_file(
+            version="DS-LIC-1",
+            kind=DatasetKind.LICENSED,
+            path=data_csv,
+            timestamp_column="timestamp",
+        )
+
+        with pytest.raises(MarketFeedSecurityError, match="sealed FINAL_HOLDOUT zone"):
+            ReplayFeed.from_dataset_registry(registry, "DS-LIC-1", split_zone=SplitZone.FINAL_HOLDOUT)
+
+        # 3. Engine checks feed.split_zone
+        spec = _make_spec()
+        record = _make_valid_record(spec, dataset_version="DS-LIC-1")
+        feed = ReplayFeed(df, dataset_version="DS-LIC-1", split_zone=SplitZone.FORWARD_PAPER)
+        object.__setattr__(feed, "_split_zone", SplitZone.FINAL_HOLDOUT.value)
+
+        engine = PaperReplayEngine()
+        with pytest.raises(MarketFeedSecurityError, match="FINAL_HOLDOUT"):
+            engine.run_replay(record, spec, feed)

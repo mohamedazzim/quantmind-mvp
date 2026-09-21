@@ -9,6 +9,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import date, datetime
+import hashlib
 from typing import Iterator, Sequence
 
 import numpy as np
@@ -146,10 +147,35 @@ class ReplayFeed(MarketDataFeed):
             frame["open_interest"].to_numpy(dtype=float) if "open_interest" in frame.columns else np.zeros(len(frame), dtype=float)
         )
 
+        # Freeze arrays to prevent in-place buffer tampering / TOCTOU mutations
+        self._timestamps.flags.writeable = False
+        self._opens.flags.writeable = False
+        self._highs.flags.writeable = False
+        self._lows.flags.writeable = False
+        self._closes.flags.writeable = False
+        self._volumes.flags.writeable = False
+        self._open_interests.flags.writeable = False
+
         ts_series = pd.Series(self._timestamps)
         self._session_ids = ts_series.dt.normalize().dt.strftime("%Y-%m-%d").to_numpy()
+        self._session_ids.flags.writeable = False
         self._n_bars = len(frame)
         self._cursor = 0
+
+        # Cryptographic bar buffer digest
+        h = hashlib.sha256()
+        h.update(self._timestamps.tobytes())
+        h.update(self._opens.tobytes())
+        h.update(self._highs.tobytes())
+        h.update(self._lows.tobytes())
+        h.update(self._closes.tobytes())
+        h.update(self._volumes.tobytes())
+        h.update(self._open_interests.tobytes())
+        self._bars_sha256 = h.hexdigest()
+
+        # Feed authority tracking
+        self._is_authoritative = False
+        self._dataset_sha256 = ""
 
     @property
     def symbol(self) -> str:
@@ -174,6 +200,21 @@ class ReplayFeed(MarketDataFeed):
     @property
     def split_zone(self) -> str:
         return self._split_zone
+
+    @property
+    def is_authoritative(self) -> bool:
+        """Whether this feed was authoritatively loaded and verified from DatasetRegistry."""
+        return self._is_authoritative
+
+    @property
+    def dataset_sha256(self) -> str:
+        """The SHA-256 hash of the authoritative registered dataset source."""
+        return self._dataset_sha256
+
+    @property
+    def bars_sha256(self) -> str:
+        """Cryptographic SHA-256 digest of the raw immutable bar buffers."""
+        return self._bars_sha256
 
     @property
     def is_paused(self) -> bool:
@@ -257,7 +298,7 @@ class ReplayFeed(MarketDataFeed):
         else:
             df = registry._read_file(record.path, record.format, record.sha256)
 
-        return cls(
+        feed = cls(
             df,
             symbol=symbol,
             lot_size=lot_size,
@@ -266,3 +307,6 @@ class ReplayFeed(MarketDataFeed):
             dataset_version=dataset_version,
             split_zone=split_zone,
         )
+        feed._is_authoritative = True
+        feed._dataset_sha256 = record.sha256
+        return feed

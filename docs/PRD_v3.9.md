@@ -161,7 +161,7 @@ The `PaperRiskEngine` maintains deterministic intra-session portfolio state:
 ### 4.2 Tamper Resistance, Provenance Closure & Immutability
 - `PaperLedger` rejects both `DELETE` and `UPDATE` SQL queries via SQLite database triggers across all 5 tables: `paper_orders`, `paper_fills`, `paper_risk_events`, `paper_positions`, and `paper_reports`.
 - `paper_reports` enforces primary key uniqueness on `report_hash`, preventing report overwriting or state mutation.
-- `ReplayReport` cryptographically binds all 17 result-affecting parameters into its canonical representation and `report_hash`:
+- `ReplayReport` cryptographically binds all 19 result-affecting parameters into its canonical representation and `report_hash`:
   1. `strategy_spec_hash`: SHA-256 of normalized strategy spec
   2. `qualification_hash`: SHA-256 audit digest of `StrategyQualificationRecord`
   3. `dataset_version`: Authoritative dataset version string
@@ -180,6 +180,7 @@ The `PaperRiskEngine` maintains deterministic intra-session portfolio state:
   16. `initial_capital`: Replay capital base in currency units
   17. `enforce_session_boundaries`: Boolean flag controlling intra-day liquidation
   18. `split_zone`: Authoritative dataset split partition (`FORWARD_PAPER`)
+  19. `bars_sha256`: SHA-256 digest of immutable contiguous raw bar buffers
 - Replay engine rejects any qualification record where `record.verify_digest()` fails.
 - `ReplayFeed` enforces strict preflight validation: rejects empty datasets, missing columns, NaNs, infinities, non-monotonic or duplicate timestamps, non-positive prices, and invalid OHLC bounds (`high < low`, `high < open`, etc.). Disk checksums are verified against the registry via SHA-256 before loading.
 - `PaperRiskEngine` scales exposure calculations by contract `lot_size` ($Q \times P \times \text{lot\_size}$) and guarantees risk-reducing liquidation orders cannot be trapped if drawdown or loss thresholds are breached.
@@ -187,3 +188,9 @@ The `PaperRiskEngine` maintains deterministic intra-session portfolio state:
 ### 4.3 Security Boundaries
 - Live broker execution is completely excluded by design.
 - No network APIs, credentials, or live order routing endpoints exist.
+
+### 4.4 Replay Boundary Isolation & Anti-Bypass Hardening
+- **Exact Type Enforcement**: `PaperReplayEngine.run_replay` rejects subclasses of `StrategyQualificationRecord`, `StrategySpec`, and `ReplayFeed` (`type(feed) is not ReplayFeed`), closing class-inheritance hijacking and method override vulnerabilities.
+- **In-Memory Buffer Immutability**: All 8 columnar NumPy arrays (`_timestamps`, `_opens`, `_highs`, `_lows`, `_closes`, `_volumes`, `_open_interests`, `_session_ids`) in `ReplayFeed` are frozen (`flags.writeable = False`). In-place price modifications or TOCTOU mutations are prevented at the memory level.
+- **Authoritative Registry Feed Verification**: Replay feeds created from `DatasetRegistry.from_dataset_registry` are authenticated (`feed.is_authoritative = True`) and bind `feed.dataset_sha256`. Production replay against registered datasets requires authoritative feeds, rejecting unverified direct constructor feeds.
+- **Sealed Partition Isolation**: Access to `SplitZone.FINAL_HOLDOUT` is systematically prohibited across `ReplayFeed.__init__`, `ReplayFeed.from_dataset_registry`, `DatasetRegistry.load_zone`, and `PaperReplayEngine.run_replay`.
