@@ -190,6 +190,9 @@ class PaperEvaluationService:
     - Repeated identical evaluations produce identical outputs.
     """
 
+    def __init__(self, allow_fixture_mode: bool = False) -> None:
+        self.allow_fixture_mode = allow_fixture_mode
+
     def evaluate_window(
         self,
         *,
@@ -203,6 +206,7 @@ class PaperEvaluationService:
         evaluation_ledger: EvaluationLedger,
         observed_replay_report: ReplayReport | None = None,
         dataset_registry: DatasetRegistry | None = None,
+        allow_fixture_mode: bool | None = None,
     ) -> EvaluationResult:
         """Evaluate a single temporal window of paper trading evidence.
 
@@ -220,6 +224,9 @@ class PaperEvaluationService:
                 the authoritative baseline report.
             dataset_registry: Optional authoritative DatasetRegistry to verify
                 forward dataset registration, checksum, and licensing.
+            allow_fixture_mode: Optional boolean flag to override fixture mode.
+                When False (production), requires an authoritative DatasetRegistry
+                and persisted observed ReplayReport in PaperLedger.
 
         Returns:
             EvaluationResult with persisted snapshot and degradation events.
@@ -227,6 +234,8 @@ class PaperEvaluationService:
         Raises:
             PaperEvaluationServiceError: On any provenance or integrity failure.
         """
+        is_fixture = self.allow_fixture_mode if allow_fixture_mode is None else allow_fixture_mode
+
         # ------------------------------------------------------------------
         # Phase 1: Fail-Closed Input Provenance Validation
         # ------------------------------------------------------------------
@@ -241,6 +250,7 @@ class PaperEvaluationService:
             evaluation_ledger=evaluation_ledger,
             observed_replay_report=observed_replay_report,
             dataset_registry=dataset_registry,
+            is_fixture=is_fixture,
         )
 
         # ------------------------------------------------------------------
@@ -394,7 +404,9 @@ class PaperEvaluationService:
             cost_schedule_hash=baseline.baseline_cost_schedule_hash,
             risk_config_hash=baseline.baseline_risk_config_hash,
             monitoring_protocol_version=monitoring_config.protocol_version,
+            created_at=window_end_ts,
         )
+        regime = evaluation_ledger.register_regime(regime)
 
         return EvaluationResult(
             snapshot=snapshot,
@@ -419,6 +431,7 @@ class PaperEvaluationService:
         evaluation_ledger: EvaluationLedger,
         observed_replay_report: ReplayReport | None,
         dataset_registry: DatasetRegistry | None = None,
+        is_fixture: bool = False,
     ) -> None:
         """Fail-closed validation of all caller-supplied inputs."""
         if not strategy_id:
@@ -459,6 +472,44 @@ class PaperEvaluationService:
             raise PaperEvaluationServiceError(
                 f"observed_replay_report must be ReplayReport, got {type(observed_replay_report)}"
             )
+
+        # Production registry & report persistence requirements (fail-closed)
+        if not is_fixture:
+            if dataset_registry is None:
+                raise PaperEvaluationServiceError(
+                    "Production paper evaluation requires an authoritative DatasetRegistry. "
+                    "Unregistered execution is prohibited in production mode. "
+                    "For test fixtures, instantiate PaperEvaluationService(allow_fixture_mode=True) "
+                    "or pass allow_fixture_mode=True to evaluate_window()."
+                )
+            if observed_replay_report is not None:
+                persisted_report = paper_ledger.get_report(observed_replay_report.report_hash)
+                if persisted_report is None:
+                    raise PaperEvaluationServiceError(
+                        f"Observed ReplayReport '{observed_replay_report.report_hash}' not found in PaperLedger. "
+                        "Production evaluation requires observed ReplayReport to be authoritatively "
+                        "persisted in PaperLedger. In-memory unpersisted reports are prohibited in production mode."
+                    )
+                if persisted_report.compute_report_hash() != observed_replay_report.report_hash:
+                    raise PaperEvaluationServiceError(
+                        "Persisted observed ReplayReport failed digest verification"
+                    )
+            else:
+                base_entry = dataset_registry.get(qualification_record.dataset_version)
+                if base_entry is None:
+                    raise PaperEvaluationServiceError(
+                        f"Baseline dataset '{qualification_record.dataset_version}' is not registered in DatasetRegistry"
+                    )
+                if base_entry.sha256 != qualification_record.dataset_sha256:
+                    raise PaperEvaluationServiceError(
+                        f"Baseline dataset sha256 '{qualification_record.dataset_sha256}' does not match "
+                        f"DatasetRegistry entry sha256 '{base_entry.sha256}'"
+                    )
+                if base_entry.kind is not DatasetKind.LICENSED:
+                    raise PaperEvaluationServiceError(
+                        f"Baseline dataset '{qualification_record.dataset_version}' is kind '{base_entry.kind.value}'; "
+                        "synthetic datasets are prohibited in paper evaluation"
+                    )
 
         # Qualification record integrity
         if not qualification_record.verify_digest():

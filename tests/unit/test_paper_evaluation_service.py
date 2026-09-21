@@ -330,8 +330,8 @@ def _add_risk_event(
     paper_ledger.record_risk_event(ev)
 
 
-def _svc() -> PaperEvaluationService:
-    return PaperEvaluationService()
+def _svc(allow_fixture_mode: bool = True) -> PaperEvaluationService:
+    return PaperEvaluationService(allow_fixture_mode=allow_fixture_mode)
 
 
 # ===========================================================================

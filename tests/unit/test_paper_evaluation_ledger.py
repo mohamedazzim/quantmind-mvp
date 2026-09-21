@@ -167,7 +167,7 @@ def _make_transition(
 
 
 class TestEvaluationLedgerSchema:
-    def test_all_four_tables_and_columns_created(self) -> None:
+    def test_all_five_tables_and_columns_created(self) -> None:
         ledger = EvaluationLedger()
         conn = ledger._connection
 
@@ -181,6 +181,7 @@ class TestEvaluationLedgerSchema:
             "degradation_events",
             "paper_evaluation_transitions",
             "evaluation_baselines",
+            "paper_evaluation_regimes",
         }
 
         # Check columns of monitoring_snapshots
@@ -221,6 +222,22 @@ class TestEvaluationLedgerSchema:
         assert "baseline_cost_schedule_hash" in base_cols
         assert "baseline_risk_config_hash" in base_cols
 
+        # Check columns of paper_evaluation_regimes
+        regime_cols = {
+            c["name"] for c in conn.execute("PRAGMA table_info(paper_evaluation_regimes)").fetchall()
+        }
+        assert "regime_hash" in regime_cols
+        assert "strategy_id" in regime_cols
+        assert "qualification_hash" in regime_cols
+        assert "baseline_replay_report_hash" in regime_cols
+        assert "forward_dataset_version" in regime_cols
+        assert "forward_dataset_sha256" in regime_cols
+        assert "execution_policy" in regime_cols
+        assert "cost_schedule_hash" in regime_cols
+        assert "risk_config_hash" in regime_cols
+        assert "monitoring_protocol_version" in regime_cols
+        assert "created_at" in regime_cols
+
 
 # ---------------------------------------------------------------------------
 # 2. Immutability Trigger Tests (Direct SQL UPDATE / DELETE Abort)
@@ -228,6 +245,36 @@ class TestEvaluationLedgerSchema:
 
 
 class TestEvaluationLedgerImmutability:
+    def test_regimes_update_and_delete_aborted_by_trigger(self) -> None:
+        from quantmind.paper.evaluation.models import PaperEvaluationRegime
+        ledger = EvaluationLedger()
+        regime = PaperEvaluationRegime.create(
+            strategy_id="STRAT-001",
+            qualification_hash="qual_hash_" + "0" * 54,
+            baseline_replay_report_hash="rep_hash_" + "0" * 55,
+            forward_dataset_version="nifty_forward_v1",
+            forward_dataset_sha256="dsha_" + "0" * 59,
+            execution_policy="market_order_v1",
+            cost_schedule_hash="csh_" + "0" * 60,
+            risk_config_hash="rch_" + "0" * 60,
+            monitoring_protocol_version="MP-1.0",
+        )
+        ledger.register_regime(regime)
+
+        # Attempt direct SQL UPDATE
+        with pytest.raises(sqlite3.IntegrityError, match="immutable and cannot be updated"):
+            ledger._connection.execute(
+                "UPDATE paper_evaluation_regimes SET execution_policy = 'tampered' WHERE regime_hash = ?",
+                (regime.regime_hash,),
+            )
+
+        # Attempt direct SQL DELETE
+        with pytest.raises(sqlite3.IntegrityError, match="permanent and cannot be deleted"):
+            ledger._connection.execute(
+                "DELETE FROM paper_evaluation_regimes WHERE regime_hash = ?",
+                (regime.regime_hash,),
+            )
+
     def test_snapshots_update_and_delete_aborted_by_trigger(self) -> None:
         ledger = EvaluationLedger()
         snap = _make_snapshot()

@@ -872,6 +872,7 @@ class PaperEvaluationRegime:
     risk_config_hash: str
     monitoring_protocol_version: str
     regime_hash: str
+    created_at: str = ""
 
     def canonical_dict(self) -> dict[str, Any]:
         return {
@@ -892,6 +893,10 @@ class PaperEvaluationRegime:
     def compute_regime_hash(self) -> str:
         return hashlib.sha256(self.canonical_json().encode("utf-8")).hexdigest()
 
+    def compute_hash(self) -> str:
+        """Alias for compute_regime_hash for interface parity."""
+        return self.compute_regime_hash()
+
     def verify_digest(self) -> bool:
         return self.regime_hash == self.compute_regime_hash()
 
@@ -908,6 +913,7 @@ class PaperEvaluationRegime:
         cost_schedule_hash: str,
         risk_config_hash: str,
         monitoring_protocol_version: str,
+        created_at: str = "",
     ) -> PaperEvaluationRegime:
         canonical_bytes = json.dumps(
             {
@@ -936,4 +942,5 @@ class PaperEvaluationRegime:
             risk_config_hash=risk_config_hash,
             monitoring_protocol_version=monitoring_protocol_version,
             regime_hash=digest,
+            created_at=created_at,
         )

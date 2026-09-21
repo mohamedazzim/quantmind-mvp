@@ -12,6 +12,7 @@ error or corruption, while duplicate hashes with conflicting content raise integ
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sqlite3
@@ -21,6 +22,7 @@ from quantmind.paper.evaluation.models import (
     DegradationEvent,
     MonitoringSnapshot,
     PaperEvaluationBaseline,
+    PaperEvaluationRegime,
     PaperEvaluationTransition,
 )
 from quantmind.paper.models import ReplayReport, ReplaySessionSummary
@@ -140,6 +142,20 @@ class EvaluationLedger:
                 UNIQUE(strategy_id, qualification_hash)
             );
 
+            CREATE TABLE IF NOT EXISTS paper_evaluation_regimes (
+                regime_hash TEXT PRIMARY KEY,
+                strategy_id TEXT NOT NULL,
+                qualification_hash TEXT NOT NULL,
+                baseline_replay_report_hash TEXT NOT NULL,
+                forward_dataset_version TEXT NOT NULL,
+                forward_dataset_sha256 TEXT NOT NULL,
+                execution_policy TEXT NOT NULL,
+                cost_schedule_hash TEXT NOT NULL,
+                risk_config_hash TEXT NOT NULL,
+                monitoring_protocol_version TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
             -- IMMUTABILITY TRIGGERS: NO UPDATE, NO DELETE
 
             CREATE TRIGGER IF NOT EXISTS monitoring_snapshots_no_delete
@@ -188,6 +204,18 @@ class EvaluationLedger:
             BEFORE UPDATE ON evaluation_baselines
             BEGIN
                 SELECT RAISE(ABORT, 'evaluation baselines are immutable and cannot be updated');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS paper_evaluation_regimes_no_delete
+            BEFORE DELETE ON paper_evaluation_regimes
+            BEGIN
+                SELECT RAISE(ABORT, 'paper evaluation regimes are permanent and cannot be deleted');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS paper_evaluation_regimes_no_update
+            BEFORE UPDATE ON paper_evaluation_regimes
+            BEGIN
+                SELECT RAISE(ABORT, 'paper evaluation regimes are immutable and cannot be updated');
             END;
             """
         )
@@ -262,6 +290,21 @@ class EvaluationLedger:
             reason=row["reason"],
             timestamp=row["timestamp"],
             transition_hash=row["transition_hash"],
+        )
+
+    def _row_to_regime(self, row: sqlite3.Row) -> PaperEvaluationRegime:
+        return PaperEvaluationRegime(
+            strategy_id=row["strategy_id"],
+            qualification_hash=row["qualification_hash"],
+            baseline_replay_report_hash=row["baseline_replay_report_hash"],
+            forward_dataset_version=row["forward_dataset_version"],
+            forward_dataset_sha256=row["forward_dataset_sha256"],
+            execution_policy=row["execution_policy"],
+            cost_schedule_hash=row["cost_schedule_hash"],
+            risk_config_hash=row["risk_config_hash"],
+            monitoring_protocol_version=row["monitoring_protocol_version"],
+            regime_hash=row["regime_hash"],
+            created_at=row["created_at"],
         )
 
     # -----------------------------------------------------------------------
@@ -826,6 +869,110 @@ class EvaluationLedger:
         if row is None:
             return None
         return self._row_to_baseline(row)
+
+    def register_regime(
+        self,
+        regime: PaperEvaluationRegime,
+    ) -> PaperEvaluationRegime:
+        """Register an authoritative PaperEvaluationRegime into the ledger.
+
+        Enforces:
+        1. Exact type check
+        2. Digest integrity verification
+        3. Idempotency: re-registering an identical regime returns the existing record
+        4. Conflicting regime with same regime_hash raises EvaluationLedgerIntegrityError
+        """
+        if type(regime) is not PaperEvaluationRegime:
+            raise TypeError(f"Expected PaperEvaluationRegime, got {type(regime).__name__}")
+
+        if not regime.verify_digest():
+            raise EvaluationLedgerIntegrityError(
+                f"PaperEvaluationRegime failed digest verification (stored: {regime.regime_hash}, "
+                f"computed: {regime.compute_regime_hash()})"
+            )
+
+        if not regime.strategy_id:
+            raise EvaluationLedgerIntegrityError("regime strategy_id cannot be empty")
+        if not regime.qualification_hash:
+            raise EvaluationLedgerIntegrityError("regime qualification_hash cannot be empty")
+        if not regime.regime_hash:
+            raise EvaluationLedgerIntegrityError("regime regime_hash cannot be empty")
+
+        # 1. Query by regime_hash
+        row = self._connection.execute(
+            "SELECT * FROM paper_evaluation_regimes WHERE regime_hash = ?",
+            (regime.regime_hash,),
+        ).fetchone()
+
+        if row is not None:
+            existing = self._row_to_regime(row)
+            if existing.canonical_dict() != regime.canonical_dict():
+                raise EvaluationLedgerIntegrityError(
+                    f"Regime hash collision with conflicting semantic content for hash '{regime.regime_hash}'"
+                )
+            return existing
+
+        created_at = regime.created_at or datetime.now(timezone.utc).isoformat()
+
+        # 2. Insert
+        try:
+            self._connection.execute(
+                """
+                INSERT INTO paper_evaluation_regimes (
+                    regime_hash, strategy_id, qualification_hash,
+                    baseline_replay_report_hash, forward_dataset_version,
+                    forward_dataset_sha256, execution_policy, cost_schedule_hash,
+                    risk_config_hash, monitoring_protocol_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    regime.regime_hash,
+                    regime.strategy_id,
+                    regime.qualification_hash,
+                    regime.baseline_replay_report_hash,
+                    regime.forward_dataset_version,
+                    regime.forward_dataset_sha256,
+                    regime.execution_policy,
+                    regime.cost_schedule_hash,
+                    regime.risk_config_hash,
+                    regime.monitoring_protocol_version,
+                    created_at,
+                ),
+            )
+        except sqlite3.IntegrityError as e:
+            raise EvaluationLedgerIntegrityError(f"Failed to insert evaluation regime: {e}") from e
+
+        if not regime.created_at:
+            return PaperEvaluationRegime(
+                strategy_id=regime.strategy_id,
+                qualification_hash=regime.qualification_hash,
+                baseline_replay_report_hash=regime.baseline_replay_report_hash,
+                forward_dataset_version=regime.forward_dataset_version,
+                forward_dataset_sha256=regime.forward_dataset_sha256,
+                execution_policy=regime.execution_policy,
+                cost_schedule_hash=regime.cost_schedule_hash,
+                risk_config_hash=regime.risk_config_hash,
+                monitoring_protocol_version=regime.monitoring_protocol_version,
+                regime_hash=regime.regime_hash,
+                created_at=created_at,
+            )
+        return regime
+
+    def get_regime(self, regime_hash: str) -> PaperEvaluationRegime | None:
+        """Retrieve a PaperEvaluationRegime by its semantic SHA-256 digest."""
+        row = self._connection.execute(
+            "SELECT * FROM paper_evaluation_regimes WHERE regime_hash = ?",
+            (regime_hash,),
+        ).fetchone()
+        return self._row_to_regime(row) if row is not None else None
+
+    def list_regimes(self, strategy_id: str) -> list[PaperEvaluationRegime]:
+        """List evaluation regimes for a strategy, ordered by created_at ASC."""
+        rows = self._connection.execute(
+            "SELECT * FROM paper_evaluation_regimes WHERE strategy_id = ? ORDER BY created_at ASC",
+            (strategy_id,),
+        ).fetchall()
+        return [self._row_to_regime(r) for r in rows]
 
     def close(self) -> None:
         """Close the underlying SQLite connection if owned."""

@@ -24,10 +24,12 @@ import json
 import sqlite3
 import pytest
 
+from quantmind.data.registry import DatasetKind, DatasetRegistry
 from quantmind.paper.evaluation.ledger import EvaluationLedger, EvaluationLedgerIntegrityError
 from quantmind.paper.evaluation.models import (
     MonitoringConfig,
     PaperEvaluationBaseline,
+    PaperEvaluationRegime,
 )
 from quantmind.paper.evaluation.service import (
     EvaluationResult,
@@ -159,6 +161,8 @@ def _make_observed_report(
     execution_policy: str = "next_bar_open_v1",
     cost_schedule_hash: str = "csh" + "b" * 61,
     risk_config_hash: str = "rch" + "b" * 61,
+    dataset_version: str | None = None,
+    dataset_sha256: str | None = None,
 ) -> ReplayReport:
     session = ReplaySessionSummary(
         session_id="OBS_S001",
@@ -171,7 +175,7 @@ def _make_observed_report(
     return ReplayReport.create(
         strategy_id=qual_record.strategy_id,
         qualification_id=qual_record.qualification_id,
-        dataset_version=qual_record.dataset_version,
+        dataset_version=dataset_version or qual_record.dataset_version,
         trade_count=trades,
         gross_pnl=net_pnl + 50.0,
         net_pnl=net_pnl,
@@ -185,7 +189,7 @@ def _make_observed_report(
         session_breakdown=(session,),
         created_at="2024-01-10T16:00:00",
         qualification_hash=qual_record.record_hash,
-        dataset_sha256=qual_record.dataset_sha256,
+        dataset_sha256=dataset_sha256 or qual_record.dataset_sha256,
         split_zone="FORWARD_PAPER",
         execution_policy=execution_policy,
         cost_schedule_hash=cost_schedule_hash,
@@ -288,7 +292,7 @@ class TestFutureLeakageAttack:
         _add_risk(paper, "RE_BASE", "O_BASE", T0_PLUS_1S)
         obs = _make_observed_report(qual, session_start=T0, session_end=T1)
 
-        svc = PaperEvaluationService()
+        svc = PaperEvaluationService(allow_fixture_mode=True)
         kwargs = dict(
             strategy_id=STRATEGY_ID,
             qualification_hash=qual.record_hash,
@@ -353,7 +357,7 @@ class TestFutureLeakageAttack:
         # Setup 1: fill at T1 - 1s (INCLUDED)
         paper1, eval_ledger1, qual1, _, _ = _setup()
         _add_fill(paper1, "F_MINUS", "O_MINUS", T1_MINUS_1S)
-        res1 = PaperEvaluationService().evaluate_window(
+        res1 = PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
             strategy_id=STRATEGY_ID,
             qualification_hash=qual1.record_hash,
             qualification_record=qual1,
@@ -370,7 +374,7 @@ class TestFutureLeakageAttack:
         _add_fill(paper2, "F_MINUS", "O_MINUS", T1_MINUS_1S)
         _add_fill(paper2, "F_EXACT", "O_EXACT", T1)
         _add_fill(paper2, "F_PLUS", "O_PLUS", T1_PLUS_1S)  # Strictly after T1 -> excluded
-        res2 = PaperEvaluationService().evaluate_window(
+        res2 = PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
             strategy_id=STRATEGY_ID,
             qualification_hash=qual2.record_hash,
             qualification_record=qual2,
@@ -397,7 +401,7 @@ class TestWindowStartAttack:
         # Add in-window fill
         _add_fill(paper, "F_IN", "O_IN", T0_PLUS_1S, slip=5.0)
 
-        svc = PaperEvaluationService()
+        svc = PaperEvaluationService(allow_fixture_mode=True)
         res = svc.evaluate_window(
             strategy_id=STRATEGY_ID,
             qualification_hash=qual.record_hash,
@@ -416,7 +420,7 @@ class TestWindowStartAttack:
     def test_pre_window_risk_event_excluded(self):
         paper, eval_ledger, qual, _, _ = _setup()
         _add_risk(paper, "RE_PRE", "O_PRE", T0_MINUS_1S)
-        svc = PaperEvaluationService()
+        svc = PaperEvaluationService(allow_fixture_mode=True)
         res = svc.evaluate_window(
             strategy_id=STRATEGY_ID,
             qualification_hash=qual.record_hash,
@@ -440,7 +444,7 @@ class TestCrossSessionAttack:
     def test_case_a_complete_session_included(self):
         paper, eval_ledger, qual, _, _ = _setup()
         obs = _make_observed_report(qual, session_start=T0, session_end=T1)
-        res = PaperEvaluationService().evaluate_window(
+        res = PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
             strategy_id=STRATEGY_ID,
             qualification_hash=qual.record_hash,
             qualification_record=qual,
@@ -458,7 +462,7 @@ class TestCrossSessionAttack:
         paper, eval_ledger, qual, _, _ = _setup()
         obs = _make_observed_report(qual, session_start=T0, session_end=T1_PLUS_1S)
         with pytest.raises(PaperEvaluationServiceError, match="after T_cutoff"):
-            PaperEvaluationService().evaluate_window(
+            PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
                 strategy_id=STRATEGY_ID,
                 qualification_hash=qual.record_hash,
                 qualification_record=qual,
@@ -473,7 +477,7 @@ class TestCrossSessionAttack:
     def test_case_c_session_starts_before_t0_excluded_from_completed(self):
         paper, eval_ledger, qual, _, _ = _setup()
         obs = _make_observed_report(qual, session_start=T0_MINUS_1S, session_end=T1)
-        res = PaperEvaluationService().evaluate_window(
+        res = PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
             strategy_id=STRATEGY_ID,
             qualification_hash=qual.record_hash,
             qualification_record=qual,
@@ -491,7 +495,7 @@ class TestCrossSessionAttack:
         paper, eval_ledger, qual, _, _ = _setup()
         obs = _make_observed_report(qual, session_start=T0, session_end="2024-01-11T15:30:00")
         with pytest.raises(PaperEvaluationServiceError, match="after T_cutoff"):
-            PaperEvaluationService().evaluate_window(
+            PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
                 strategy_id=STRATEGY_ID,
                 qualification_hash=qual.record_hash,
                 qualification_record=qual,
@@ -506,7 +510,7 @@ class TestCrossSessionAttack:
     def test_case_e_session_exactly_ends_at_t1_included(self):
         paper, eval_ledger, qual, _, _ = _setup()
         obs = _make_observed_report(qual, session_start=T0, session_end=T1)
-        res = PaperEvaluationService().evaluate_window(
+        res = PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
             strategy_id=STRATEGY_ID,
             qualification_hash=qual.record_hash,
             qualification_record=qual,
@@ -523,7 +527,7 @@ class TestCrossSessionAttack:
     def test_case_f_session_exactly_starts_at_t0_included(self):
         paper, eval_ledger, qual, _, _ = _setup()
         obs = _make_observed_report(qual, session_start=T0, session_end=T1)
-        res = PaperEvaluationService().evaluate_window(
+        res = PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
             strategy_id=STRATEGY_ID,
             qualification_hash=qual.record_hash,
             qualification_record=qual,
@@ -553,7 +557,7 @@ class TestDatasetLineageAndConfigurationCompatibility:
         """Case 1: qualification dataset == observed dataset -> Valid evaluation."""
         paper, eval_ledger, qual, _, _ = _setup()
         obs = _make_observed_report(qual)
-        res = PaperEvaluationService().evaluate_window(
+        res = PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
             strategy_id=STRATEGY_ID,
             qualification_hash=qual.record_hash,
             qualification_record=qual,
@@ -583,7 +587,7 @@ class TestDatasetLineageAndConfigurationCompatibility:
         )
         forward_obs = dataclasses.replace(forward_obs, report_hash=forward_obs.compute_report_hash())
 
-        res = PaperEvaluationService().evaluate_window(
+        res = PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
             strategy_id=STRATEGY_ID,
             qualification_hash=qual.record_hash,
             qualification_record=qual,
@@ -620,7 +624,7 @@ class TestDatasetLineageAndConfigurationCompatibility:
         bad_obs = dataclasses.replace(bad_obs, report_hash=bad_obs.compute_report_hash())
 
         with pytest.raises(PaperEvaluationServiceError, match="sha256"):
-            PaperEvaluationService().evaluate_window(
+            PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
                 strategy_id=STRATEGY_ID,
                 qualification_hash=qual.record_hash,
                 qualification_record=qual,
@@ -648,7 +652,7 @@ class TestDatasetLineageAndConfigurationCompatibility:
         unreg_obs = dataclasses.replace(unreg_obs, report_hash=unreg_obs.compute_report_hash())
 
         with pytest.raises(PaperEvaluationServiceError, match="not registered in DatasetRegistry"):
-            PaperEvaluationService().evaluate_window(
+            PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
                 strategy_id=STRATEGY_ID,
                 qualification_hash=qual.record_hash,
                 qualification_record=qual,
@@ -681,7 +685,7 @@ class TestDatasetLineageAndConfigurationCompatibility:
         synth_obs = dataclasses.replace(synth_obs, report_hash=synth_obs.compute_report_hash())
 
         with pytest.raises(PaperEvaluationServiceError, match="synthetic"):
-            PaperEvaluationService().evaluate_window(
+            PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
                 strategy_id=STRATEGY_ID,
                 qualification_hash=qual.record_hash,
                 qualification_record=qual,
@@ -702,7 +706,7 @@ class TestDatasetLineageAndConfigurationCompatibility:
         holdout_obs = dataclasses.replace(holdout_obs, report_hash=holdout_obs.compute_report_hash())
 
         with pytest.raises(PaperEvaluationServiceError, match="FORWARD_PAPER"):
-            PaperEvaluationService().evaluate_window(
+            PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
                 strategy_id=STRATEGY_ID,
                 qualification_hash=qual.record_hash,
                 qualification_record=qual,
@@ -722,7 +726,7 @@ class TestDatasetLineageAndConfigurationCompatibility:
         research_obs = dataclasses.replace(research_obs, report_hash=research_obs.compute_report_hash())
 
         with pytest.raises(PaperEvaluationServiceError, match="FORWARD_PAPER"):
-            PaperEvaluationService().evaluate_window(
+            PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
                 strategy_id=STRATEGY_ID,
                 qualification_hash=qual.record_hash,
                 qualification_record=qual,
@@ -742,7 +746,7 @@ class TestDatasetLineageAndConfigurationCompatibility:
         """Case 8: Identical execution policy, cost schedule, and risk config -> Valid."""
         paper, eval_ledger, qual, _, _ = _setup()
         obs = _make_observed_report(qual)
-        res = PaperEvaluationService().evaluate_window(
+        res = PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
             strategy_id=STRATEGY_ID,
             qualification_hash=qual.record_hash,
             qualification_record=qual,
@@ -764,7 +768,7 @@ class TestDatasetLineageAndConfigurationCompatibility:
         paper, eval_ledger, qual, _, _ = _setup()
         obs = _make_observed_report(qual, execution_policy="vwap_v1")
         with pytest.raises(PaperEvaluationServiceError, match="execution_policy mismatch"):
-            PaperEvaluationService().evaluate_window(
+            PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
                 strategy_id=STRATEGY_ID,
                 qualification_hash=qual.record_hash,
                 qualification_record=qual,
@@ -781,7 +785,7 @@ class TestDatasetLineageAndConfigurationCompatibility:
         paper, eval_ledger, qual, _, _ = _setup()
         obs = _make_observed_report(qual, cost_schedule_hash="different_csh" + "0" * 51)
         with pytest.raises(PaperEvaluationServiceError, match="cost_schedule_hash mismatch"):
-            PaperEvaluationService().evaluate_window(
+            PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
                 strategy_id=STRATEGY_ID,
                 qualification_hash=qual.record_hash,
                 qualification_record=qual,
@@ -798,7 +802,7 @@ class TestDatasetLineageAndConfigurationCompatibility:
         paper, eval_ledger, qual, _, _ = _setup()
         obs = _make_observed_report(qual, risk_config_hash="different_rch" + "0" * 51)
         with pytest.raises(PaperEvaluationServiceError, match="risk_config_hash mismatch"):
-            PaperEvaluationService().evaluate_window(
+            PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
                 strategy_id=STRATEGY_ID,
                 qualification_hash=qual.record_hash,
                 qualification_record=qual,
@@ -817,7 +821,7 @@ class TestDatasetLineageAndConfigurationCompatibility:
         tampered_csh = "tampered_csh_" + "9" * 51
         obs = _make_observed_report(qual, cost_schedule_hash=tampered_csh)
         with pytest.raises(PaperEvaluationServiceError, match="cost_schedule_hash mismatch"):
-            PaperEvaluationService().evaluate_window(
+            PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
                 strategy_id=STRATEGY_ID,
                 qualification_hash=qual.record_hash,
                 qualification_record=qual,
@@ -832,7 +836,7 @@ class TestDatasetLineageAndConfigurationCompatibility:
     def test_13_regime_break_after_evaluation_begins(self):
         """Case 13: Configuration change after initial evaluation window -> Fails closed against established baseline."""
         paper, eval_ledger, qual, _, _ = _setup()
-        svc = PaperEvaluationService()
+        svc = PaperEvaluationService(allow_fixture_mode=True)
         valid_obs = _make_observed_report(qual)
 
         # Window 1 evaluates cleanly under established baseline regime
@@ -876,7 +880,7 @@ class TestDatasetLineageAndConfigurationCompatibility:
             qual, session_start="2023-01-01T09:15:00", session_end="2023-01-01T15:30:00"
         )
         with pytest.raises(PaperEvaluationServiceError, match="older report / wrong window"):
-            PaperEvaluationService().evaluate_window(
+            PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
                 strategy_id=STRATEGY_ID,
                 qualification_hash=qual.record_hash,
                 qualification_record=qual,
@@ -905,7 +909,7 @@ class TestBaselineObservationSeparation:
         # Tight config that checks drawdown expansion
         config = _make_config(max_drawdown_expansion_limit=1.5)
 
-        r1 = PaperEvaluationService().evaluate_window(
+        r1 = PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
             strategy_id=STRATEGY_ID,
             qualification_hash=qual.record_hash,
             qualification_record=qual,
@@ -958,7 +962,7 @@ class TestBaselineObservationSeparation:
         )
         paper2.record_position_snapshot(T1_MINUS_1S, strat2, p_pos2)
 
-        r2 = PaperEvaluationService().evaluate_window(
+        r2 = PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
             strategy_id=strat2,
             qualification_hash=qual2.record_hash,
             qualification_record=qual2,
@@ -995,7 +999,7 @@ class TestPaperLedgerReadOnlyAttack:
         }
 
         # Evaluate
-        PaperEvaluationService().evaluate_window(
+        PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
             strategy_id=STRATEGY_ID,
             qualification_hash=qual.record_hash,
             qualification_record=qual,
@@ -1029,7 +1033,7 @@ class TestEvaluationLedgerIdempotencyAttack:
         _add_pos(paper, T0_PLUS_1S, realized_pnl=0.0)
         _add_pos(paper, T1_MINUS_1S, realized_pnl=-5000.0)
 
-        svc = PaperEvaluationService()
+        svc = PaperEvaluationService(allow_fixture_mode=True)
         kwargs = dict(
             strategy_id=STRATEGY_ID,
             qualification_hash=qual.record_hash,
@@ -1070,7 +1074,7 @@ class TestProvenanceAttacks:
         paper, eval_ledger, qual, _, _ = _setup()
         bad_qual = dataclasses.replace(qual, observed_sharpe=999.0)
         with pytest.raises(PaperEvaluationServiceError):
-            PaperEvaluationService().evaluate_window(
+            PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
                 strategy_id=STRATEGY_ID,
                 qualification_hash=qual.record_hash,
                 qualification_record=bad_qual,
@@ -1084,7 +1088,7 @@ class TestProvenanceAttacks:
     def test_tampered_qualification_hash(self):
         paper, eval_ledger, qual, _, _ = _setup()
         with pytest.raises(PaperEvaluationServiceError, match="mismatch"):
-            PaperEvaluationService().evaluate_window(
+            PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
                 strategy_id=STRATEGY_ID,
                 qualification_hash="fake_hash" + "0" * 55,
                 qualification_record=qual,
@@ -1098,7 +1102,7 @@ class TestProvenanceAttacks:
     def test_tampered_strategy_id(self):
         paper, eval_ledger, qual, _, _ = _setup()
         with pytest.raises(PaperEvaluationServiceError):
-            PaperEvaluationService().evaluate_window(
+            PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
                 strategy_id="OTHER_ID",
                 qualification_hash=qual.record_hash,
                 qualification_record=qual,
@@ -1112,7 +1116,7 @@ class TestProvenanceAttacks:
     def test_window_start_after_window_end(self):
         paper, eval_ledger, qual, _, _ = _setup()
         with pytest.raises(PaperEvaluationServiceError, match="window_start_ts"):
-            PaperEvaluationService().evaluate_window(
+            PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
                 strategy_id=STRATEGY_ID,
                 qualification_hash=qual.record_hash,
                 qualification_record=qual,
@@ -1139,7 +1143,7 @@ class TestMetricDoubleCountingAudit:
         # Cost to turnover bps = (40 / 1,000,000) * 10000 = 0.4000 bps
         _add_fill(paper, "F_EXACT", "O_EXACT", T0_PLUS_1S, price=20000.0, qty=1, cost=25.0, slip=15.0)
 
-        res = PaperEvaluationService().evaluate_window(
+        res = PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
             strategy_id=STRATEGY_ID,
             qualification_hash=qual.record_hash,
             qualification_record=qual,
@@ -1172,7 +1176,7 @@ class TestM5ApiSecurity:
         qual = _make_qual_record()
 
         with pytest.raises(PaperEvaluationServiceError, match="paper_ledger must be PaperLedger"):
-            PaperEvaluationService().evaluate_window(
+            PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
                 strategy_id=STRATEGY_ID,
                 qualification_hash=qual.record_hash,
                 qualification_record=qual,
@@ -1192,7 +1196,7 @@ class TestM5ApiSecurity:
         qual = _make_qual_record()
 
         with pytest.raises(PaperEvaluationServiceError, match="evaluation_ledger must be EvaluationLedger"):
-            PaperEvaluationService().evaluate_window(
+            PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
                 strategy_id=STRATEGY_ID,
                 qualification_hash=qual.record_hash,
                 qualification_record=qual,
@@ -1210,7 +1214,7 @@ class TestM5ApiSecurity:
             protocol_version = "MP-1.0"
 
         with pytest.raises(PaperEvaluationServiceError, match="monitoring_config must be MonitoringConfig"):
-            PaperEvaluationService().evaluate_window(
+            PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
                 strategy_id=STRATEGY_ID,
                 qualification_hash=qual.record_hash,
                 qualification_record=qual,
@@ -1252,3 +1256,381 @@ class TestResearchIsolation:
         assert "quantmind.strategy.registry" not in imported_names
         assert "transition_state" not in imported_names
         assert "acquire_lock" not in imported_names
+
+
+# ===========================================================================
+# 12. PRODUCTION REGISTRY REQUIREMENT (M5.3)
+# ===========================================================================
+
+class TestProductionRegistryRequirement:
+    """Rigorous audit of production registry requirement & report persistence."""
+
+    def _setup_registered(self):
+        paper, eval_ledger, qual, base_rep, base_binding = _setup()
+
+        reg = DatasetRegistry(":memory:")
+        # Register base dataset
+        reg._connection.execute(
+            "INSERT INTO datasets (version, kind, path, format, sha256, timestamp_column) VALUES (?, ?, ?, ?, ?, ?)",
+            (DATASET_VERSION, DatasetKind.LICENSED.value, "base.csv", "csv", DATASET_SHA256, "timestamp"),
+        )
+
+        # Register forward paper dataset
+        fwd_version = "nifty_forward_2024_v1"
+        fwd_sha = "ab" * 32
+        reg._connection.execute(
+            "INSERT INTO datasets (version, kind, path, format, sha256, timestamp_column) VALUES (?, ?, ?, ?, ?, ?)",
+            (fwd_version, DatasetKind.LICENSED.value, "fwd.csv", "csv", fwd_sha, "timestamp"),
+        )
+
+        # Create observed report
+        obs = _make_observed_report(
+            qual,
+            dataset_version=fwd_version,
+            dataset_sha256=fwd_sha,
+        )
+        return paper, eval_ledger, qual, reg, obs
+
+    def test_production_evaluation_fails_without_dataset_registry(self):
+        paper, eval_ledger, qual, _, _ = _setup()
+        obs = _make_observed_report(qual)
+        # Default is allow_fixture_mode=False
+        with pytest.raises(
+            PaperEvaluationServiceError,
+            match="Production paper evaluation requires an authoritative DatasetRegistry",
+        ):
+            PaperEvaluationService().evaluate_window(
+                strategy_id=STRATEGY_ID,
+                qualification_hash=qual.record_hash,
+                qualification_record=qual,
+                window_start_ts=T0,
+                window_end_ts=T1,
+                monitoring_config=_make_config(),
+                paper_ledger=paper,
+                evaluation_ledger=eval_ledger,
+                observed_replay_report=obs,
+                dataset_registry=None,
+            )
+
+    def test_production_evaluation_fails_with_unpersisted_observed_report(self):
+        paper, eval_ledger, qual, reg, obs = self._setup_registered()
+        # obs is valid in memory and dataset is registered, but obs is NOT recorded in paper_ledger
+        with pytest.raises(
+            PaperEvaluationServiceError,
+            match="persisted in PaperLedger",
+        ):
+            PaperEvaluationService().evaluate_window(
+                strategy_id=STRATEGY_ID,
+                qualification_hash=qual.record_hash,
+                qualification_record=qual,
+                window_start_ts=T0,
+                window_end_ts=T1,
+                monitoring_config=_make_config(),
+                paper_ledger=paper,
+                evaluation_ledger=eval_ledger,
+                observed_replay_report=obs,
+                dataset_registry=reg,
+            )
+
+    def test_production_evaluation_fails_with_unregistered_forward_dataset(self):
+        paper, eval_ledger, qual, reg, obs = self._setup_registered()
+        # Unregistered dataset
+        unreg_obs = dataclasses.replace(obs, dataset_version="unregistered_fwd_v99")
+        unreg_obs = dataclasses.replace(unreg_obs, report_hash=unreg_obs.compute_report_hash())
+        paper.record_report(unreg_obs)
+
+        with pytest.raises(
+            PaperEvaluationServiceError,
+            match="not registered in DatasetRegistry",
+        ):
+            PaperEvaluationService().evaluate_window(
+                strategy_id=STRATEGY_ID,
+                qualification_hash=qual.record_hash,
+                qualification_record=qual,
+                window_start_ts=T0,
+                window_end_ts=T1,
+                monitoring_config=_make_config(),
+                paper_ledger=paper,
+                evaluation_ledger=eval_ledger,
+                observed_replay_report=unreg_obs,
+                dataset_registry=reg,
+            )
+
+    def test_production_evaluation_fails_with_synthetic_forward_dataset(self):
+        paper, eval_ledger, qual, reg, obs = self._setup_registered()
+        # Register synthetic dataset
+        synth_version = "custom_synth_data_v1"
+        synth_sha = "aa" * 32
+        reg._connection.execute(
+            "INSERT INTO datasets (version, kind, path, format, sha256, timestamp_column) VALUES (?, ?, ?, ?, ?, ?)",
+            (synth_version, DatasetKind.SYNTHETIC.value, "synth.csv", "csv", synth_sha, "timestamp"),
+        )
+
+        synth_obs = dataclasses.replace(
+            obs,
+            dataset_version=synth_version,
+            dataset_sha256=synth_sha,
+        )
+        synth_obs = dataclasses.replace(synth_obs, report_hash=synth_obs.compute_report_hash())
+        paper.record_report(synth_obs)
+
+        with pytest.raises(
+            PaperEvaluationServiceError,
+            match="synthetic",
+        ):
+            PaperEvaluationService().evaluate_window(
+                strategy_id=STRATEGY_ID,
+                qualification_hash=qual.record_hash,
+                qualification_record=qual,
+                window_start_ts=T0,
+                window_end_ts=T1,
+                monitoring_config=_make_config(),
+                paper_ledger=paper,
+                evaluation_ledger=eval_ledger,
+                observed_replay_report=synth_obs,
+                dataset_registry=reg,
+            )
+
+    def test_production_evaluation_fails_with_checksum_mismatch(self):
+        paper, eval_ledger, qual, reg, obs = self._setup_registered()
+        tampered_obs = dataclasses.replace(obs, dataset_sha256="ff" * 32)
+        tampered_obs = dataclasses.replace(tampered_obs, report_hash=tampered_obs.compute_report_hash())
+        paper.record_report(tampered_obs)
+
+        with pytest.raises(
+            PaperEvaluationServiceError,
+            match="does not match DatasetRegistry entry sha256",
+        ):
+            PaperEvaluationService().evaluate_window(
+                strategy_id=STRATEGY_ID,
+                qualification_hash=qual.record_hash,
+                qualification_record=qual,
+                window_start_ts=T0,
+                window_end_ts=T1,
+                monitoring_config=_make_config(),
+                paper_ledger=paper,
+                evaluation_ledger=eval_ledger,
+                observed_replay_report=tampered_obs,
+                dataset_registry=reg,
+            )
+
+    def test_production_evaluation_fails_with_non_forward_paper_split(self):
+        paper, eval_ledger, qual, reg, obs = self._setup_registered()
+        holdout_obs = dataclasses.replace(obs, split_zone="FINAL_HOLDOUT")
+        holdout_obs = dataclasses.replace(holdout_obs, report_hash=holdout_obs.compute_report_hash())
+        paper.record_report(holdout_obs)
+
+        with pytest.raises(
+            PaperEvaluationServiceError,
+            match="must be 'FORWARD_PAPER'",
+        ):
+            PaperEvaluationService().evaluate_window(
+                strategy_id=STRATEGY_ID,
+                qualification_hash=qual.record_hash,
+                qualification_record=qual,
+                window_start_ts=T0,
+                window_end_ts=T1,
+                monitoring_config=_make_config(),
+                paper_ledger=paper,
+                evaluation_ledger=eval_ledger,
+                observed_replay_report=holdout_obs,
+                dataset_registry=reg,
+            )
+
+    def test_production_evaluation_succeeds_with_persisted_report_and_licensed_registry(self):
+        paper, eval_ledger, qual, reg, obs = self._setup_registered()
+        paper.record_report(obs)
+
+        res = PaperEvaluationService().evaluate_window(
+            strategy_id=STRATEGY_ID,
+            qualification_hash=qual.record_hash,
+            qualification_record=qual,
+            window_start_ts=T0,
+            window_end_ts=T1,
+            monitoring_config=_make_config(),
+            paper_ledger=paper,
+            evaluation_ledger=eval_ledger,
+            observed_replay_report=obs,
+            dataset_registry=reg,
+        )
+        assert isinstance(res, EvaluationResult)
+        assert res.snapshot.strategy_id == STRATEGY_ID
+        assert res.regime is not None
+        assert res.regime.forward_dataset_version == obs.dataset_version
+
+    def test_fixture_mode_allows_in_memory_unregistered_evidence(self):
+        paper, eval_ledger, qual, _, _ = _setup()
+        obs = _make_observed_report(qual)
+        # Not persisted in paper_ledger, and dataset_registry=None, but allow_fixture_mode=True
+        res = PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
+            strategy_id=STRATEGY_ID,
+            qualification_hash=qual.record_hash,
+            qualification_record=qual,
+            window_start_ts=T0,
+            window_end_ts=T1,
+            monitoring_config=_make_config(),
+            paper_ledger=paper,
+            evaluation_ledger=eval_ledger,
+            observed_replay_report=obs,
+            dataset_registry=None,
+        )
+        assert isinstance(res, EvaluationResult)
+        assert res.snapshot.strategy_id == STRATEGY_ID
+
+
+# ===========================================================================
+# 13. AUTHORITATIVE REGIME PERSISTENCE (M5.3)
+# ===========================================================================
+
+class TestAuthoritativeRegimePersistence:
+    """Rigorous audit of PaperEvaluationRegime persistence, immutability, and traceability."""
+
+    def test_regime_persisted_in_ledger_during_evaluation(self):
+        paper, eval_ledger, qual, _, _ = _setup()
+        res = PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
+            strategy_id=STRATEGY_ID,
+            qualification_hash=qual.record_hash,
+            qualification_record=qual,
+            window_start_ts=T0,
+            window_end_ts=T1,
+            monitoring_config=_make_config(),
+            paper_ledger=paper,
+            evaluation_ledger=eval_ledger,
+        )
+        assert res.regime is not None
+        persisted = eval_ledger.get_regime(res.regime.regime_hash)
+        assert persisted is not None
+        assert persisted.regime_hash == res.regime.regime_hash
+        assert persisted.strategy_id == STRATEGY_ID
+        assert persisted.qualification_hash == qual.record_hash
+        assert persisted.created_at == T1
+
+    def test_regime_immutability_triggers(self):
+        paper, eval_ledger, qual, _, _ = _setup()
+        res = PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
+            strategy_id=STRATEGY_ID,
+            qualification_hash=qual.record_hash,
+            qualification_record=qual,
+            window_start_ts=T0,
+            window_end_ts=T1,
+            monitoring_config=_make_config(),
+            paper_ledger=paper,
+            evaluation_ledger=eval_ledger,
+        )
+        regime_hash = res.regime.regime_hash
+
+        # Attempt raw SQL UPDATE
+        with pytest.raises(sqlite3.IntegrityError, match="immutable and cannot be updated"):
+            eval_ledger._connection.execute(
+                "UPDATE paper_evaluation_regimes SET execution_policy = 'tampered' WHERE regime_hash = ?",
+                (regime_hash,),
+            )
+
+        # Attempt raw SQL DELETE
+        with pytest.raises(sqlite3.IntegrityError, match="permanent and cannot be deleted"):
+            eval_ledger._connection.execute(
+                "DELETE FROM paper_evaluation_regimes WHERE regime_hash = ?",
+                (regime_hash,),
+            )
+
+    def test_regime_registration_idempotency(self):
+        paper, eval_ledger, qual, _, _ = _setup()
+        res = PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
+            strategy_id=STRATEGY_ID,
+            qualification_hash=qual.record_hash,
+            qualification_record=qual,
+            window_start_ts=T0,
+            window_end_ts=T1,
+            monitoring_config=_make_config(),
+            paper_ledger=paper,
+            evaluation_ledger=eval_ledger,
+        )
+        # Re-register identical regime
+        re_reg = eval_ledger.register_regime(res.regime)
+        assert re_reg.regime_hash == res.regime.regime_hash
+
+        # Count rows in paper_evaluation_regimes
+        count = eval_ledger._connection.execute(
+            "SELECT COUNT(*) as cnt FROM paper_evaluation_regimes WHERE regime_hash = ?",
+            (res.regime.regime_hash,),
+        ).fetchone()["cnt"]
+        assert count == 1
+
+    def test_regime_conflicting_registration_fails_closed(self):
+        eval_ledger = EvaluationLedger()
+        regime1 = PaperEvaluationRegime.create(
+            strategy_id="STRAT-001",
+            qualification_hash="qual_hash_" + "0" * 54,
+            baseline_replay_report_hash="rep_hash_" + "0" * 55,
+            forward_dataset_version="nifty_forward_v1",
+            forward_dataset_sha256="dsha_" + "0" * 59,
+            execution_policy="market_order_v1",
+            cost_schedule_hash="csh_" + "0" * 60,
+            risk_config_hash="rch_" + "0" * 60,
+            monitoring_protocol_version="MP-1.0",
+        )
+        eval_ledger.register_regime(regime1)
+
+        # Conflicting regime forged with same regime_hash but different execution policy
+        conflicting = PaperEvaluationRegime(
+            strategy_id="STRAT-001",
+            qualification_hash="qual_hash_" + "0" * 54,
+            baseline_replay_report_hash="rep_hash_" + "0" * 55,
+            forward_dataset_version="nifty_forward_v1",
+            forward_dataset_sha256="dsha_" + "0" * 59,
+            execution_policy="forged_policy",
+            cost_schedule_hash="csh_" + "0" * 60,
+            risk_config_hash="rch_" + "0" * 60,
+            monitoring_protocol_version="MP-1.0",
+            regime_hash=regime1.regime_hash,
+        )
+        with pytest.raises(EvaluationLedgerIntegrityError, match="digest verification|collision"):
+            eval_ledger.register_regime(conflicting)
+
+    def test_regime_traceability_chain(self):
+        paper, eval_ledger, qual, base_rep, _ = _setup()
+        # Add fills and positions that generate degradation
+        _add_fill(paper, "F1", "O1", T0_PLUS_1S, price=20000.0, qty=1, cost=50.0, slip=1000.0)
+        _add_pos(paper, T0_PLUS_1S, realized_pnl=0.0)
+        _add_pos(paper, T1_MINUS_1S, realized_pnl=-50000.0)
+        config = _make_config(max_drawdown_expansion_limit=1.5, max_slippage_drift_ratio=0.5)
+
+        res = PaperEvaluationService(allow_fixture_mode=True).evaluate_window(
+            strategy_id=STRATEGY_ID,
+            qualification_hash=qual.record_hash,
+            qualification_record=qual,
+            window_start_ts=T0,
+            window_end_ts=T1,
+            monitoring_config=config,
+            paper_ledger=paper,
+            evaluation_ledger=eval_ledger,
+        )
+
+        assert res.regime is not None
+        assert res.snapshot is not None
+        assert len(res.degradation_events) > 0
+
+        # Cryptographic traceability:
+        # 1. Regime binds strategy, qualification, baseline report, dataset, config protocol
+        assert res.regime.strategy_id == res.snapshot.strategy_id
+        assert res.regime.qualification_hash == res.snapshot.qualification_hash
+        assert res.regime.forward_dataset_version == res.snapshot.dataset_version
+        assert res.regime.forward_dataset_sha256 == res.snapshot.dataset_sha256
+        assert res.regime.monitoring_protocol_version == res.snapshot.monitoring_protocol_version
+
+        # 2. Degradation event foreign key strictly references snapshot_hash
+        for event in res.degradation_events:
+            assert event.snapshot_hash == res.snapshot.snapshot_hash
+            assert event.strategy_id == res.regime.strategy_id
+            assert event.qualification_hash == res.regime.qualification_hash
+            assert event.baseline_replay_report_hash == res.regime.baseline_replay_report_hash
+
+        # 3. Querying EvaluationLedger by regime_hash retrieves the authoritative regime
+        retrieved_regime = eval_ledger.get_regime(res.regime.regime_hash)
+        assert retrieved_regime is not None
+        assert retrieved_regime.verify_digest()
+        assert retrieved_regime.canonical_dict() == res.regime.canonical_dict()
+
+        # 4. list_regimes for strategy returns the regime
+        strat_regimes = eval_ledger.list_regimes(STRATEGY_ID)
+        assert any(r.regime_hash == res.regime.regime_hash for r in strat_regimes)
