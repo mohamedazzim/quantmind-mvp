@@ -96,6 +96,36 @@ class ReplayFeed(MarketDataFeed):
         if missing_cols:
             raise ValueError(f"ReplayFeed data missing required columns: {sorted(missing_cols)}")
 
+        # Check for NaNs
+        for col in required_cols:
+            if data[col].isna().any():
+                raise ValueError(f"ReplayFeed data contains NaN values in column '{col}'")
+
+        # Check for non-finite / infs in numeric columns
+        for col in ("open", "high", "low", "close"):
+            numeric_vals = pd.to_numeric(data[col], errors="coerce")
+            if not np.isfinite(numeric_vals).all():
+                raise ValueError(f"ReplayFeed data contains non-finite or infinite values in column '{col}'")
+
+        # Check timestamp chronological ordering and duplicates
+        ts_series = pd.to_datetime(data["timestamp"])
+        if ts_series.duplicated().any():
+            raise ValueError("ReplayFeed data contains duplicate timestamps")
+        if not ts_series.is_monotonic_increasing:
+            raise ValueError("ReplayFeed data must be sorted in strictly increasing chronological order")
+
+        # Check OHLC price sanity
+        opens = data["open"].to_numpy(dtype=float)
+        highs = data["high"].to_numpy(dtype=float)
+        lows = data["low"].to_numpy(dtype=float)
+        closes = data["close"].to_numpy(dtype=float)
+
+        if (opens <= 0).any() or (highs <= 0).any() or (lows <= 0).any() or (closes <= 0).any():
+            raise ValueError("ReplayFeed prices must be strictly positive")
+
+        if (highs < lows).any() or (highs < opens).any() or (highs < closes).any() or (lows > opens).any() or (lows > closes).any():
+            raise ValueError("ReplayFeed OHLC invariant violated: high must be >= open, low, close and low must be <= open, high, close")
+
         self._symbol = symbol
         self._lot_size = lot_size
         self._tick_size = tick_size
@@ -105,8 +135,8 @@ class ReplayFeed(MarketDataFeed):
         self._is_paused = False
 
         # Pre-extract columnar NumPy arrays for fast zero-overhead iteration
-        frame = data.sort_values("timestamp").reset_index(drop=True)
-        self._timestamps = pd.to_datetime(frame["timestamp"]).to_numpy()
+        frame = data.reset_index(drop=True)
+        self._timestamps = ts_series.to_numpy()
         self._opens = frame["open"].to_numpy(dtype=float)
         self._highs = frame["high"].to_numpy(dtype=float)
         self._lows = frame["low"].to_numpy(dtype=float)
@@ -207,6 +237,9 @@ class ReplayFeed(MarketDataFeed):
         record = registry.get(dataset_version)
         if record is None:
             raise MarketFeedSecurityError(f"Dataset '{dataset_version}' not found in registry")
+
+        # Verify disk checksum against registry record
+        record = registry.verify(dataset_version)
 
         if require_licensed and record.kind is not DatasetKind.LICENSED:
             raise MarketFeedSecurityError(

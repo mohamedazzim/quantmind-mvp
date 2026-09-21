@@ -48,6 +48,12 @@ class PaperOrder:
     status: PaperOrderStatus = PaperOrderStatus.SUBMITTED
     rejection_reason: str | None = None
 
+    def __post_init__(self) -> None:
+        if self.quantity <= 0:
+            raise ValueError(f"PaperOrder quantity must be positive, got {self.quantity}")
+        if self.side not in (1, -1):
+            raise ValueError(f"PaperOrder side must be 1 (Buy) or -1 (Sell), got {self.side}")
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "order_id": self.order_id,
@@ -190,6 +196,16 @@ class ReplayReport:
     session_breakdown: tuple[ReplaySessionSummary, ...]
     report_hash: str
     created_at: str
+    strategy_spec_hash: str = ""
+    qualification_hash: str = ""
+    dataset_sha256: str = ""
+    research_protocol_version: str = ""
+    symbol: str = "NIFTY_FUT"
+    lot_size: int = 50
+    tick_size: float = 0.05
+    slippage_bps_per_side: float = 0.0
+    cost_schedule_id: str = ""
+    execution_policy: str = "next_bar_open_v1"
 
     @property
     def total_costs(self) -> float:
@@ -201,18 +217,28 @@ class ReplayReport:
 
     def canonical_dict(self) -> dict[str, Any]:
         return {
+            "cost_schedule_id": self.cost_schedule_id,
             "costs": round(float(self.costs), 4),
+            "dataset_sha256": self.dataset_sha256,
             "dataset_version": self.dataset_version,
+            "execution_policy": self.execution_policy,
             "expectancy": round(float(self.expectancy), 4),
             "exposure": round(float(self.exposure), 4),
             "gross_pnl": round(float(self.gross_pnl), 4),
+            "lot_size": int(self.lot_size),
             "max_drawdown_bps": round(float(self.max_drawdown_bps), 4),
             "net_pnl": round(float(self.net_pnl), 4),
+            "qualification_hash": self.qualification_hash,
             "qualification_id": self.qualification_id,
+            "research_protocol_version": self.research_protocol_version,
             "session_breakdown": [s.to_dict() for s in self.session_breakdown],
             "sharpe_ratio": round(float(self.sharpe_ratio), 4) if self.sharpe_ratio is not None else None,
             "slippage": round(float(self.slippage), 4),
+            "slippage_bps_per_side": round(float(self.slippage_bps_per_side), 4),
             "strategy_id": self.strategy_id,
+            "strategy_spec_hash": self.strategy_spec_hash,
+            "symbol": self.symbol,
+            "tick_size": round(float(self.tick_size), 4),
             "trade_count": int(self.trade_count),
             "win_rate": round(float(self.win_rate), 4),
         }
@@ -242,6 +268,16 @@ class ReplayReport:
         sharpe_ratio: float | None,
         session_breakdown: Sequence[ReplaySessionSummary],
         created_at: str | None = None,
+        strategy_spec_hash: str = "",
+        qualification_hash: str = "",
+        dataset_sha256: str = "",
+        research_protocol_version: str = "",
+        symbol: str = "NIFTY_FUT",
+        lot_size: int = 50,
+        tick_size: float = 0.05,
+        slippage_bps_per_side: float = 0.0,
+        cost_schedule_id: str = "",
+        execution_policy: str = "next_bar_open_v1",
     ) -> ReplayReport:
         now = created_at or datetime.now(timezone.utc).isoformat()
         temp = cls(
@@ -261,6 +297,16 @@ class ReplayReport:
             session_breakdown=tuple(session_breakdown),
             report_hash="",
             created_at=now,
+            strategy_spec_hash=strategy_spec_hash,
+            qualification_hash=qualification_hash,
+            dataset_sha256=dataset_sha256,
+            research_protocol_version=research_protocol_version,
+            symbol=symbol,
+            lot_size=lot_size,
+            tick_size=tick_size,
+            slippage_bps_per_side=slippage_bps_per_side,
+            cost_schedule_id=cost_schedule_id,
+            execution_policy=execution_policy,
         )
         h = temp.compute_report_hash()
         return cls(
@@ -280,4 +326,14 @@ class ReplayReport:
             session_breakdown=tuple(session_breakdown),
             report_hash=h,
             created_at=now,
+            strategy_spec_hash=strategy_spec_hash,
+            qualification_hash=qualification_hash,
+            dataset_sha256=dataset_sha256,
+            research_protocol_version=research_protocol_version,
+            symbol=symbol,
+            lot_size=lot_size,
+            tick_size=tick_size,
+            slippage_bps_per_side=slippage_bps_per_side,
+            cost_schedule_id=cost_schedule_id,
+            execution_policy=execution_policy,
         )

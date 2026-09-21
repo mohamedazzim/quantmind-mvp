@@ -119,16 +119,58 @@ class PaperLedger:
                 SELECT RAISE(ABORT, 'paper orders are permanent and cannot be deleted');
             END;
 
+            CREATE TRIGGER IF NOT EXISTS paper_orders_no_update
+            BEFORE UPDATE ON paper_orders
+            BEGIN
+                SELECT RAISE(ABORT, 'paper orders are immutable and cannot be updated');
+            END;
+
             CREATE TRIGGER IF NOT EXISTS paper_fills_no_delete
             BEFORE DELETE ON paper_fills
             BEGIN
                 SELECT RAISE(ABORT, 'paper fills are permanent and cannot be deleted');
             END;
 
+            CREATE TRIGGER IF NOT EXISTS paper_fills_no_update
+            BEFORE UPDATE ON paper_fills
+            BEGIN
+                SELECT RAISE(ABORT, 'paper fills are immutable and cannot be updated');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS paper_positions_no_delete
+            BEFORE DELETE ON paper_positions
+            BEGIN
+                SELECT RAISE(ABORT, 'paper positions are permanent and cannot be deleted');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS paper_positions_no_update
+            BEFORE UPDATE ON paper_positions
+            BEGIN
+                SELECT RAISE(ABORT, 'paper positions are immutable and cannot be updated');
+            END;
+
             CREATE TRIGGER IF NOT EXISTS paper_risk_no_delete
             BEFORE DELETE ON paper_risk_events
             BEGIN
                 SELECT RAISE(ABORT, 'paper risk events are permanent and cannot be deleted');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS paper_risk_no_update
+            BEFORE UPDATE ON paper_risk_events
+            BEGIN
+                SELECT RAISE(ABORT, 'paper risk events are immutable and cannot be updated');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS paper_reports_no_delete
+            BEFORE DELETE ON paper_reports
+            BEGIN
+                SELECT RAISE(ABORT, 'paper reports are permanent and cannot be deleted');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS paper_reports_no_update
+            BEFORE UPDATE ON paper_reports
+            BEGIN
+                SELECT RAISE(ABORT, 'paper reports are immutable and cannot be updated');
             END;
             """
         )
@@ -222,9 +264,18 @@ class PaperLedger:
         )
 
     def record_report(self, report: ReplayReport) -> None:
+        row = self._connection.execute(
+            "SELECT report_json FROM paper_reports WHERE report_hash = ?",
+            (report.report_hash,),
+        ).fetchone()
+        if row is not None:
+            if row["report_json"] == report.canonical_json():
+                return  # Idempotent
+            raise sqlite3.IntegrityError(f"Conflicting report exists for report_hash '{report.report_hash}'")
+
         self._connection.execute(
             """
-            INSERT OR REPLACE INTO paper_reports (
+            INSERT INTO paper_reports (
                 qualification_id, strategy_id, report_hash, report_json, created_at
             ) VALUES (?, ?, ?, ?, ?)
             """,

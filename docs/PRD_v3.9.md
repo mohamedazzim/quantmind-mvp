@@ -158,9 +158,13 @@ The `PaperRiskEngine` maintains deterministic intra-session portfolio state:
 - Any two executions of `PaperReplayEngine` with identical `StrategyQualificationRecord`, `StrategySpec`, and `ReplayFeed` produce bitwise identical orders, fills, trade lists, and `report_hash`.
 - `ReplayReport.canonical_json()` provides a reproducible, order-invariant representation for SHA-256 verification.
 
-### 4.2 Tamper Resistance
-- `PaperLedger` rejects `DELETE` or `UPDATE` SQL queries via database triggers.
+### 4.2 Tamper Resistance & Immutability
+- `PaperLedger` rejects both `DELETE` and `UPDATE` SQL queries via SQLite database triggers across all 5 tables: `paper_orders`, `paper_fills`, `paper_risk_events`, `paper_positions`, and `paper_reports`.
+- `paper_reports` enforces primary key uniqueness on `report_hash`, preventing report overwriting or state mutation.
+- `ReplayReport` cryptographically binds complete execution provenance into `report_hash`: `strategy_spec_hash`, `qualification_hash`, `dataset_sha256`, `research_protocol_version`, `symbol`, `lot_size`, `tick_size`, `slippage_bps_per_side`, `cost_schedule_id`, and `execution_policy`.
 - Replay engine rejects any qualification record where `record.verify_digest()` fails.
+- `ReplayFeed` enforces strict preflight validation: rejects empty datasets, missing columns, NaNs, infinities, non-monotonic or duplicate timestamps, non-positive prices, and invalid OHLC bounds (`high < low`, `high < open`, etc.). Disk checksums are verified against the registry via SHA-256 before loading.
+- `PaperRiskEngine` scales exposure calculations by contract `lot_size` ($Q \times P \times \text{lot\_size}$) and guarantees risk-reducing liquidation orders cannot be trapped if drawdown or loss thresholds are breached.
 
 ### 4.3 Security Boundaries
 - Live broker execution is completely excluded by design.

@@ -89,7 +89,20 @@ class PaperReplayEngine:
         quantity: int = 1,
         hold_bars: int = 1,
     ) -> ReplayReport:
-        """Execute deterministic paper replay for a qualified candidate strategy."""
+        # 0. Strict type verification (fail closed against fake/duck-typed objects)
+        if not isinstance(qualification_record, StrategyQualificationRecord):
+            raise PaperReplaySecurityError(
+                f"qualification_record must be an instance of StrategyQualificationRecord, got {type(qualification_record)}"
+            )
+        if not isinstance(strategy_spec, StrategySpec):
+            raise PaperReplaySecurityError(
+                f"strategy_spec must be an instance of StrategySpec, got {type(strategy_spec)}"
+            )
+        if not isinstance(feed, ReplayFeed):
+            raise PaperReplaySecurityError(
+                f"feed must be an instance of ReplayFeed, got {type(feed)}"
+            )
+
         # 1. Authoritative qualification verification
         if not qualification_record.verify_digest():
             raise PaperReplaySecurityError(
@@ -135,7 +148,7 @@ class PaperReplayEngine:
             )
 
         # 4. Dataset scope & registry verification
-        if feed.dataset_version and feed.dataset_version != qualification_record.dataset_version:
+        if not feed.dataset_version or feed.dataset_version != qualification_record.dataset_version:
             raise PaperReplaySecurityError(
                 f"ReplayFeed dataset_version '{feed.dataset_version}' does not match qualification record "
                 f"dataset_version '{qualification_record.dataset_version}'"
@@ -184,6 +197,16 @@ class PaperReplayEngine:
                 expectancy=0.0,
                 sharpe_ratio=None,
                 session_breakdown=[],
+                strategy_spec_hash=qualification_record.strategy_spec_hash,
+                qualification_hash=qualification_record.record_hash,
+                dataset_sha256=qualification_record.dataset_sha256,
+                research_protocol_version=qualification_record.research_protocol_version,
+                symbol=feed.symbol,
+                lot_size=feed.lot_size,
+                tick_size=feed.tick_size,
+                slippage_bps_per_side=self.slippage_bps_per_side,
+                cost_schedule_id=self.cost_schedule.schedule_id if self.cost_schedule else "",
+                execution_policy="next_bar_open_v1",
             )
 
         df = pd.DataFrame(
@@ -249,6 +272,7 @@ class PaperReplayEngine:
                     current_position=current_position,
                     current_price=bar.open,
                     session_id=session_id,
+                    lot_size=lot_size,
                 )
 
                 if risk_event is not None:
@@ -287,7 +311,7 @@ class PaperReplayEngine:
                     fill_cost = (fill_price * order.quantity * lot_size) * (cost_bps / 10000.0)
 
                     fill = PaperFill(
-                        fill_id=f"FILL-{uuid.uuid4().hex[:12]}",
+                        fill_id=f"FILL-{order.order_id}",
                         order_id=order.order_id,
                         strategy_id=order.strategy_id,
                         symbol=order.symbol,
@@ -469,6 +493,16 @@ class PaperReplayEngine:
             expectancy=expectancy,
             sharpe_ratio=sharpe,
             session_breakdown=breakdown,
+            strategy_spec_hash=qualification_record.strategy_spec_hash,
+            qualification_hash=qualification_record.record_hash,
+            dataset_sha256=qualification_record.dataset_sha256,
+            research_protocol_version=qualification_record.research_protocol_version,
+            symbol=feed.symbol,
+            lot_size=feed.lot_size,
+            tick_size=feed.tick_size,
+            slippage_bps_per_side=self.slippage_bps_per_side,
+            cost_schedule_id=self.cost_schedule.schedule_id if self.cost_schedule else "",
+            execution_policy="next_bar_open_v1",
         )
 
         self.ledger.record_report(report)

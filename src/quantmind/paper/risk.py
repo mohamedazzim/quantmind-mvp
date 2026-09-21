@@ -25,6 +25,20 @@ class PaperRiskConfig:
     max_trades_per_session: int = 100
     kill_switch: bool = False
 
+    def __post_init__(self) -> None:
+        if self.max_position <= 0:
+            raise ValueError(f"max_position must be positive, got {self.max_position}")
+        if self.max_order_quantity <= 0:
+            raise ValueError(f"max_order_quantity must be positive, got {self.max_order_quantity}")
+        if self.max_daily_loss <= 0.0:
+            raise ValueError(f"max_daily_loss must be positive, got {self.max_daily_loss}")
+        if self.max_strategy_drawdown <= 0.0:
+            raise ValueError(f"max_strategy_drawdown must be positive, got {self.max_strategy_drawdown}")
+        if self.max_exposure <= 0.0:
+            raise ValueError(f"max_exposure must be positive, got {self.max_exposure}")
+        if self.max_trades_per_session <= 0:
+            raise ValueError(f"max_trades_per_session must be positive, got {self.max_trades_per_session}")
+
 
 class PaperRiskEngine:
     """Pre-trade risk gateway for paper replay orders."""
@@ -64,6 +78,8 @@ class PaperRiskEngine:
         current_position: PaperPosition,
         current_price: float,
         session_id: str,
+        *,
+        lot_size: int = 1,
     ) -> PaperRiskEvent | None:
         """Evaluate an order before execution against deterministic risk limits.
 
@@ -71,10 +87,25 @@ class PaperRiskEngine:
         """
         self.on_session_change(session_id)
 
+        # 0. Sanity check order parameters
+        if order.quantity <= 0 or order.side not in (1, -1):
+            event = PaperRiskEvent(
+                event_id=f"RISK-{order.order_id}-invalid_order_parameters",
+                order_id=order.order_id,
+                strategy_id=order.strategy_id,
+                rule_name="invalid_order_parameters",
+                limit_value=1.0,
+                requested_value=float(order.quantity),
+                timestamp=order.submit_timestamp,
+                reason=f"Order quantity ({order.quantity}) and side ({order.side}) must be valid",
+            )
+            self._risk_events.append(event)
+            return event
+
         # 1. Kill switch check
         if self.config.kill_switch:
             event = PaperRiskEvent(
-                event_id=f"RISK-{uuid.uuid4().hex[:12]}",
+                event_id=f"RISK-{order.order_id}-kill_switch",
                 order_id=order.order_id,
                 strategy_id=order.strategy_id,
                 rule_name="kill_switch",
@@ -89,7 +120,7 @@ class PaperRiskEngine:
         # 2. Maximum order quantity check
         if order.quantity > self.config.max_order_quantity:
             event = PaperRiskEvent(
-                event_id=f"RISK-{uuid.uuid4().hex[:12]}",
+                event_id=f"RISK-{order.order_id}-max_order_quantity",
                 order_id=order.order_id,
                 strategy_id=order.strategy_id,
                 rule_name="max_order_quantity",
@@ -101,11 +132,15 @@ class PaperRiskEngine:
             self._risk_events.append(event)
             return event
 
+        # Position impact analysis: check if this order is purely risk-reducing (liquidating/closing)
+        current_qty = current_position.quantity
+        projected_position = current_qty + (order.side * order.quantity)
+        is_risk_reducing = abs(projected_position) < abs(current_qty)
+
         # 3. Maximum position check (post-execution position size)
-        projected_position = current_position.quantity + (order.side * order.quantity)
-        if abs(projected_position) > self.config.max_position:
+        if not is_risk_reducing and abs(projected_position) > self.config.max_position:
             event = PaperRiskEvent(
-                event_id=f"RISK-{uuid.uuid4().hex[:12]}",
+                event_id=f"RISK-{order.order_id}-max_position",
                 order_id=order.order_id,
                 strategy_id=order.strategy_id,
                 rule_name="max_position",
@@ -117,10 +152,10 @@ class PaperRiskEngine:
             self._risk_events.append(event)
             return event
 
-        # 4. Maximum trades per session check
-        if self._session_trades_count >= self.config.max_trades_per_session:
+        # 4. Maximum trades per session check (applies to new position entries)
+        if not is_risk_reducing and self._session_trades_count >= self.config.max_trades_per_session:
             event = PaperRiskEvent(
-                event_id=f"RISK-{uuid.uuid4().hex[:12]}",
+                event_id=f"RISK-{order.order_id}-max_trades_per_session",
                 order_id=order.order_id,
                 strategy_id=order.strategy_id,
                 rule_name="max_trades_per_session",
@@ -132,10 +167,10 @@ class PaperRiskEngine:
             self._risk_events.append(event)
             return event
 
-        # 5. Maximum daily loss check
-        if self._daily_realized_loss >= self.config.max_daily_loss:
+        # 5. Maximum daily loss check (applies to new position entries)
+        if not is_risk_reducing and self._daily_realized_loss >= self.config.max_daily_loss:
             event = PaperRiskEvent(
-                event_id=f"RISK-{uuid.uuid4().hex[:12]}",
+                event_id=f"RISK-{order.order_id}-max_daily_loss",
                 order_id=order.order_id,
                 strategy_id=order.strategy_id,
                 rule_name="max_daily_loss",
@@ -147,11 +182,11 @@ class PaperRiskEngine:
             self._risk_events.append(event)
             return event
 
-        # 6. Maximum strategy drawdown check
+        # 6. Maximum strategy drawdown check (applies to new position entries)
         current_drawdown = max(0.0, self._peak_equity - self._current_equity)
-        if current_drawdown >= self.config.max_strategy_drawdown:
+        if not is_risk_reducing and current_drawdown >= self.config.max_strategy_drawdown:
             event = PaperRiskEvent(
-                event_id=f"RISK-{uuid.uuid4().hex[:12]}",
+                event_id=f"RISK-{order.order_id}-max_strategy_drawdown",
                 order_id=order.order_id,
                 strategy_id=order.strategy_id,
                 rule_name="max_strategy_drawdown",
@@ -163,11 +198,11 @@ class PaperRiskEngine:
             self._risk_events.append(event)
             return event
 
-        # 7. Maximum exposure check
-        projected_exposure = abs(projected_position) * current_price
-        if projected_exposure > self.config.max_exposure:
+        # 7. Maximum exposure check (includes lot_size multiplier)
+        projected_exposure = abs(projected_position) * current_price * max(1, lot_size)
+        if not is_risk_reducing and projected_exposure > self.config.max_exposure:
             event = PaperRiskEvent(
-                event_id=f"RISK-{uuid.uuid4().hex[:12]}",
+                event_id=f"RISK-{order.order_id}-max_exposure",
                 order_id=order.order_id,
                 strategy_id=order.strategy_id,
                 rule_name="max_exposure",
