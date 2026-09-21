@@ -42,6 +42,7 @@ from .metrics import (
     count_risk_events,
     count_session_overnight_spills,
 )
+
 from .models import (
     DegradationEvent,
     MonitoringConfig,
@@ -51,6 +52,7 @@ from .models import (
     PaperEvaluationBaseline,
     PaperEvaluationRegime,
     PaperEvaluationTransition,
+    PaperExecutionLifecycleContext,
     ResearchFeedbackRecord,
 )
 from .service import (
@@ -78,6 +80,7 @@ __all__ = [
     "PaperEvaluationService",
     "PaperEvaluationServiceError",
     "PaperEvaluationTransition",
+    "PaperExecutionLifecycleContext",
     "RULE_DD_EXPANSION_CRITICAL",
     "RULE_RISK_REJECTION_SPIKE",
     "RULE_SHARPE_COLLAPSE",

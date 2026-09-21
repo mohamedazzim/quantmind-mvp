@@ -17,6 +17,7 @@ import sqlite3
 from typing import Any, Mapping, Sequence
 
 from .compiler import derive_strategy_id, normalize_strategy_spec
+from quantmind.paper.evaluation.models import PaperEvaluationTransition
 from quantmind.research_integrity.holdout import HoldoutState
 from quantmind.research_integrity.qualification import (
     StrategyQualificationRecord,
@@ -85,6 +86,7 @@ class StrategyRegistryRecord:
     registered_at: str
     updated_at: str
     history: tuple[tuple[str, str, str], ...]  # (timestamp, state, reason)
+    latest_transition_hash: str | None = None
 
 
 class StrategyRegistry:
@@ -126,7 +128,8 @@ class StrategyRegistry:
                 qualification_hash TEXT,
                 registered_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                history_json TEXT NOT NULL
+                history_json TEXT NOT NULL,
+                latest_transition_hash TEXT
             );
             """
         )
@@ -135,11 +138,13 @@ class StrategyRegistry:
         self,
         strategy_spec: StrategySpec,
         initial_state: StrategyLifecycleState = StrategyLifecycleState.IDEA,
+        *,
+        registered_at: str | None = None,
     ) -> str:
         """Register a new strategy spec under its derived strategy_id."""
         norm_spec = normalize_strategy_spec(strategy_spec)
         strategy_id = derive_strategy_id(norm_spec)
-        now = datetime.now(timezone.utc).isoformat()
+        now = registered_at or datetime.now(timezone.utc).isoformat()
 
         row = self._connection.execute(
             "SELECT spec_json, state FROM strategies WHERE strategy_id = ?",
@@ -159,8 +164,8 @@ class StrategyRegistry:
             """
             INSERT INTO strategies (
                 strategy_id, spec_json, state, qualification_id, qualification_hash,
-                registered_at, updated_at, history_json
-            ) VALUES (?, ?, ?, NULL, NULL, ?, ?, ?)
+                registered_at, updated_at, history_json, latest_transition_hash
+            ) VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, NULL)
             """,
             (
                 strategy_id,
@@ -192,6 +197,13 @@ class StrategyRegistry:
         history_raw = json.loads(row["history_json"])
         history_tuples = tuple((h[0], h[1], h[2]) for h in history_raw)
 
+        keys = row.keys()
+        latest_trans = (
+            row["latest_transition_hash"]
+            if ("latest_transition_hash" in keys and row["latest_transition_hash"] is not None)
+            else None
+        )
+
         return StrategyRegistryRecord(
             strategy_id=row["strategy_id"],
             strategy_spec=strategy_spec,
@@ -201,6 +213,7 @@ class StrategyRegistry:
             registered_at=row["registered_at"],
             updated_at=row["updated_at"],
             history=history_tuples,
+            latest_transition_hash=latest_trans,
         )
 
     def transition_state(
@@ -210,6 +223,10 @@ class StrategyRegistry:
         *,
         reason: str = "",
         qualification_record: StrategyQualificationRecord | None = None,
+        transition: PaperEvaluationTransition | None = None,
+        evaluation_ledger: Any | None = None,
+        position_quantity: float | int | None = None,
+        timestamp: str | None = None,
     ) -> StrategyRegistryRecord:
         """Transition a strategy to a new lifecycle state with strict state machine validation."""
         record = self.get_strategy(strategy_id)
@@ -222,10 +239,48 @@ class StrategyRegistry:
                 f"Allowed targets: {sorted(s.value for s in allowed) if allowed else 'None (terminal)'}"
             )
 
+        now = datetime.now(timezone.utc).isoformat()
+        transition_ts = timestamp or (transition.timestamp if transition is not None else now)
+        if transition_ts < record.updated_at:
+            raise StrategyRegistryError(
+                f"Causal ordering violation: transition timestamp '{transition_ts}' is earlier than updated_at '{record.updated_at}'"
+            )
+
+        # 2. Strict evidence validation if transition is provided
+        if transition is not None:
+            if type(transition) is not PaperEvaluationTransition:
+                raise TypeError(f"Expected PaperEvaluationTransition, got {type(transition).__name__}")
+            if not transition.verify_digest():
+                raise StrategyRegistryError(
+                    f"Transition for '{strategy_id}' failed cryptographic digest verification"
+                )
+            if transition.strategy_id != strategy_id:
+                raise StrategyRegistryError(
+                    f"Transition strategy_id '{transition.strategy_id}' does not match registered strategy '{strategy_id}'"
+                )
+            if transition.old_state != record.state.value:
+                raise StrategyRegistryError(
+                    f"Transition old_state '{transition.old_state}' does not match current state '{record.state.value}'"
+                )
+            if transition.new_state != target_state.value:
+                raise StrategyRegistryError(
+                    f"Transition new_state '{transition.new_state}' does not match target state '{target_state.value}'"
+                )
+            if record.qualification_hash and transition.qualification_hash:
+                if record.qualification_hash != transition.qualification_hash:
+                    raise StrategyRegistryError(
+                        f"Transition qualification_hash '{transition.qualification_hash}' does not match "
+                        f"strategy qualification_hash '{record.qualification_hash}'"
+                    )
+            if transition.timestamp < record.updated_at:
+                raise StrategyRegistryError(
+                    f"Causal ordering violation: transition timestamp '{transition.timestamp}' is earlier than updated_at '{record.updated_at}'"
+                )
+
         qual_id = record.qualification_id
         qual_hash = record.qualification_hash
 
-        # 2. Strict qualification gate for PAPER_ELIGIBLE
+        # 3. State-specific validation gates
         if target_state == StrategyLifecycleState.PAPER_ELIGIBLE:
             if qualification_record is None:
                 raise StrategyRegistryError(
@@ -268,22 +323,62 @@ class StrategyRegistry:
             qual_id = qualification_record.qualification_id
             qual_hash = qualification_record.record_hash
 
-        now = datetime.now(timezone.utc).isoformat()
+        elif target_state == StrategyLifecycleState.PAPER_ACTIVE:
+            if not qual_hash:
+                raise StrategyRegistryError(
+                    f"Cannot transition strategy '{strategy_id}' to PAPER_ACTIVE without qualification record"
+                )
+            if evaluation_ledger is not None:
+                baseline = evaluation_ledger.get_baseline(strategy_id, qual_hash)
+                if baseline is None:
+                    raise StrategyRegistryError(
+                        f"Cannot transition to PAPER_ACTIVE: missing authoritative baseline binding in EvaluationLedger for strategy '{strategy_id}'"
+                    )
+
+        elif target_state == StrategyLifecycleState.DEGRADED:
+            if transition is not None and evaluation_ledger is not None and transition.snapshot_hash:
+                snap = evaluation_ledger.get_snapshot(transition.snapshot_hash)
+                if snap is None:
+                    raise StrategyRegistryError(
+                        f"Snapshot '{transition.snapshot_hash}' not found in EvaluationLedger"
+                    )
+
+        elif target_state == StrategyLifecycleState.RETIRED:
+            if position_quantity is not None and abs(position_quantity) > 1e-9:
+                raise StrategyRegistryError(
+                    f"Cannot transition strategy '{strategy_id}' to RETIRED with open position ({position_quantity}). Strategy must be flat."
+                )
+
+        elif target_state == StrategyLifecycleState.RESEARCH:
+            if record.state == StrategyLifecycleState.DEGRADED:
+                if position_quantity is not None and abs(position_quantity) > 1e-9:
+                    raise StrategyRegistryError(
+                        f"Cannot transition strategy '{strategy_id}' to RESEARCH with open position ({position_quantity}). Strategy must be flat."
+                    )
+                # Invalidate qualification binding so strategy must re-qualify
+                qual_id = None
+                qual_hash = None
+
         new_history = list(record.history)
-        new_history.append((now, target_state.value, reason))
+        eff_reason = reason or (transition.reason if transition is not None else "")
+        new_history.append((transition_ts, target_state.value, eff_reason))
+        new_transition_hash = (
+            transition.transition_hash if transition is not None else record.latest_transition_hash
+        )
 
         self._connection.execute(
             """
             UPDATE strategies
-            SET state = ?, qualification_id = ?, qualification_hash = ?, updated_at = ?, history_json = ?
+            SET state = ?, qualification_id = ?, qualification_hash = ?, updated_at = ?, history_json = ?, latest_transition_hash = ?
             WHERE strategy_id = ?
             """,
             (
                 target_state.value,
                 qual_id,
                 qual_hash,
-                now,
+                transition_ts,
                 json.dumps(new_history),
+                new_transition_hash,
                 strategy_id,
             ),
         )

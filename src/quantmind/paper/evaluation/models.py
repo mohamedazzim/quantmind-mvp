@@ -485,6 +485,9 @@ class PaperEvaluationTransition:
     reason: str
     timestamp: str
     transition_hash: str
+    qualification_hash: str = ""
+    snapshot_hash: str = ""
+    regime_hash: str = ""
 
     def __post_init__(self) -> None:
         if not self.strategy_id:
@@ -532,7 +535,7 @@ class PaperEvaluationTransition:
 
         Excludes administrative transition_id and transition_hash.
         """
-        return {
+        d = {
             "evidence_hash": str(self.evidence_hash),
             "evidence_type": str(self.evidence_type),
             "initiator": str(self.initiator),
@@ -542,6 +545,13 @@ class PaperEvaluationTransition:
             "strategy_id": str(self.strategy_id),
             "timestamp": str(self.timestamp),
         }
+        if self.qualification_hash:
+            d["qualification_hash"] = str(self.qualification_hash)
+        if self.snapshot_hash:
+            d["snapshot_hash"] = str(self.snapshot_hash)
+        if self.regime_hash:
+            d["regime_hash"] = str(self.regime_hash)
+        return d
 
     def canonical_json(self) -> str:
         """Produce deterministic canonical JSON string."""
@@ -567,6 +577,9 @@ class PaperEvaluationTransition:
         evidence_hash: str,
         reason: str,
         timestamp: str,
+        qualification_hash: str = "",
+        snapshot_hash: str = "",
+        regime_hash: str = "",
     ) -> PaperEvaluationTransition:
         """Factory method to instantiate an immutable PaperEvaluationTransition with computed hash."""
         temp = cls(
@@ -579,6 +592,9 @@ class PaperEvaluationTransition:
             reason=reason,
             timestamp=timestamp,
             transition_hash="",
+            qualification_hash=qualification_hash,
+            snapshot_hash=snapshot_hash,
+            regime_hash=regime_hash,
         )
         digest = temp.compute_hash()
         return cls(
@@ -591,7 +607,48 @@ class PaperEvaluationTransition:
             reason=reason,
             timestamp=timestamp,
             transition_hash=digest,
+            qualification_hash=qualification_hash,
+            snapshot_hash=snapshot_hash,
+            regime_hash=regime_hash,
         )
+
+
+@dataclass(frozen=True)
+class PaperExecutionLifecycleContext:
+    """Explicit immutable replay lifecycle authorization context (PRD v4.0 M6).
+
+    Guarantees that historical paper replay relies on a deterministic, captured
+    lifecycle authorization rather than querying mutable external registries on every bar.
+    """
+
+    strategy_id: str
+    authorized_state: str  # "PAPER_ACTIVE", "PAPER_ELIGIBLE", "DEGRADED", "RETIRED", "REJECTED"
+    authorization_timestamp: str
+    governance_transition_hash: str = ""
+    regime_hash: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.strategy_id:
+            raise ValueError("strategy_id cannot be empty")
+        if not self.authorized_state:
+            raise ValueError("authorized_state cannot be empty")
+        if not self.authorization_timestamp:
+            raise ValueError("authorization_timestamp cannot be empty")
+
+    @property
+    def is_degraded(self) -> bool:
+        """When True, new entry orders are suppressed (HALT_NEW_ENTRIES), while existing positions exit normally."""
+        return self.authorized_state == "DEGRADED"
+
+    @property
+    def allows_new_entries(self) -> bool:
+        """Only PAPER_ACTIVE strategies can take new entries."""
+        return self.authorized_state == "PAPER_ACTIVE"
+
+    @property
+    def is_prohibited(self) -> bool:
+        """RETIRED and REJECTED states prohibit replay execution entirely."""
+        return self.authorized_state in ("REJECTED", "RETIRED")
 
 
 # ---------------------------------------------------------------------------

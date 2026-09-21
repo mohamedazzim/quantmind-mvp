@@ -18,6 +18,7 @@ import pandas as pd
 from quantmind.backtest.engine import CostSchedule
 from quantmind.data.registry import DatasetKind, DatasetRegistry
 from quantmind.data.splits import SplitZone
+from quantmind.paper.evaluation.models import PaperExecutionLifecycleContext
 from quantmind.paper.feed import MarketFeedSecurityError, ReplayBar, ReplayFeed
 from quantmind.paper.ledger import PaperLedger
 from quantmind.paper.models import (
@@ -90,6 +91,7 @@ class PaperReplayEngine:
         initial_capital: float = 100_000.0,
         quantity: int = 1,
         hold_bars: int = 1,
+        lifecycle_context: PaperExecutionLifecycleContext | None = None,
     ) -> ReplayReport:
         """Explicit fixture/test replay path for non-production execution with synthetic/fixture data."""
         return self.run_replay(
@@ -100,6 +102,7 @@ class PaperReplayEngine:
             quantity=quantity,
             hold_bars=hold_bars,
             allow_fixture_feed=True,
+            lifecycle_context=lifecycle_context,
         )
 
     def run_replay(
@@ -112,6 +115,7 @@ class PaperReplayEngine:
         quantity: int = 1,
         hold_bars: int = 1,
         allow_fixture_feed: bool | None = None,
+        lifecycle_context: PaperExecutionLifecycleContext | None = None,
     ) -> ReplayReport:
         # 0. Strict type verification (fail closed against fake/duck-typed objects or subclass hijacks)
         if type(qualification_record) is not StrategyQualificationRecord:
@@ -170,6 +174,22 @@ class PaperReplayEngine:
                 f"Qualification record strategy_spec_hash '{qualification_record.strategy_spec_hash}' does not match "
                 f"strategy spec hash '{expected_spec_hash}'"
             )
+
+        # 3.1 Lifecycle context authorization verification (PRD v4.0 M6)
+        if lifecycle_context is not None:
+            if type(lifecycle_context) is not PaperExecutionLifecycleContext:
+                raise TypeError(
+                    f"lifecycle_context must be an instance of PaperExecutionLifecycleContext, got {type(lifecycle_context).__name__}"
+                )
+            if lifecycle_context.strategy_id != derived_strat_id:
+                raise PaperReplaySecurityError(
+                    f"Lifecycle context strategy_id '{lifecycle_context.strategy_id}' does not match "
+                    f"strategy '{derived_strat_id}'"
+                )
+            if lifecycle_context.is_prohibited:
+                raise PaperReplaySecurityError(
+                    f"Paper replay prohibited for strategy '{derived_strat_id}' in state '{lifecycle_context.authorized_state}'"
+                )
 
         # 4. Prohibit sealed holdout access unconditionally
         if feed.split_zone == SplitZone.FINAL_HOLDOUT.value:
@@ -481,8 +501,13 @@ class PaperReplayEngine:
                         requested_price=bar.close,
                     )
             elif current_signal != 0 and pending_order is None and (i + 1 < n_bars):
+                # Suppress entry orders if lifecycle context disallows new entries (e.g. DEGRADED)
+                allows_entry = True
+                if lifecycle_context is not None and not lifecycle_context.allows_new_entries:
+                    allows_entry = False
+
                 # Don't enter on session boundary if enforce_session_boundaries is True
-                if not (self.enforce_session_boundaries and next_is_different_session):
+                if allows_entry and not (self.enforce_session_boundaries and next_is_different_session):
                     pending_order = PaperOrder(
                         order_id=f"ORD-ENTRY-{i}",
                         strategy_id=derived_strat_id,

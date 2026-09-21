@@ -140,7 +140,10 @@ class EvaluationLedger:
                 evidence_hash TEXT NOT NULL,
                 reason TEXT NOT NULL,
                 timestamp TEXT NOT NULL,
-                transition_hash TEXT UNIQUE NOT NULL
+                transition_hash TEXT UNIQUE NOT NULL,
+                qualification_hash TEXT,
+                snapshot_hash TEXT,
+                regime_hash TEXT
             );
 
             CREATE TABLE IF NOT EXISTS evaluation_baselines (
@@ -288,6 +291,22 @@ class EvaluationLedger:
         )
 
     def _row_to_transition(self, row: sqlite3.Row) -> PaperEvaluationTransition:
+        keys = row.keys()
+        qualification_hash = (
+            row["qualification_hash"]
+            if ("qualification_hash" in keys and row["qualification_hash"] is not None)
+            else ""
+        )
+        snapshot_hash = (
+            row["snapshot_hash"]
+            if ("snapshot_hash" in keys and row["snapshot_hash"] is not None)
+            else ""
+        )
+        regime_hash = (
+            row["regime_hash"]
+            if ("regime_hash" in keys and row["regime_hash"] is not None)
+            else ""
+        )
         return PaperEvaluationTransition(
             strategy_id=row["strategy_id"],
             old_state=row["old_state"],
@@ -298,6 +317,9 @@ class EvaluationLedger:
             reason=row["reason"],
             timestamp=row["timestamp"],
             transition_hash=row["transition_hash"],
+            qualification_hash=qualification_hash,
+            snapshot_hash=snapshot_hash,
+            regime_hash=regime_hash,
         )
 
     def _row_to_regime(self, row: sqlite3.Row) -> PaperEvaluationRegime:
@@ -566,8 +588,9 @@ class EvaluationLedger:
                 """
                 INSERT INTO paper_evaluation_transitions (
                     transition_id, strategy_id, old_state, new_state, initiator,
-                    evidence_type, evidence_hash, reason, timestamp, transition_hash
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    evidence_type, evidence_hash, reason, timestamp, transition_hash,
+                    qualification_hash, snapshot_hash, regime_hash
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     transition.derived_transition_id,
@@ -580,6 +603,9 @@ class EvaluationLedger:
                     transition.reason,
                     transition.timestamp,
                     transition.transition_hash,
+                    transition.qualification_hash,
+                    transition.snapshot_hash,
+                    transition.regime_hash,
                 ),
             )
         except sqlite3.IntegrityError as e:
@@ -898,6 +924,14 @@ class EvaluationLedger:
 
         rows = self._connection.execute(query, params).fetchall()
         return [self._row_to_transition(r) for r in rows]
+
+    def get_latest_transition(self, strategy_id: str) -> PaperEvaluationTransition | None:
+        """Return the most recent PaperEvaluationTransition for strategy_id by timestamp DESC, rowid DESC."""
+        row = self._connection.execute(
+            "SELECT * FROM paper_evaluation_transitions WHERE strategy_id = ? ORDER BY timestamp DESC, rowid DESC LIMIT 1",
+            (strategy_id,),
+        ).fetchone()
+        return self._row_to_transition(row) if row is not None else None
 
     def get_baseline(self, strategy_id: str, qualification_hash: str) -> PaperEvaluationBaseline | None:
         """Return the single authoritative PaperEvaluationBaseline for a strategy + qualification, or None."""
