@@ -28,6 +28,7 @@ from quantmind.data.registry import DatasetKind, DatasetRegistry
 from quantmind.paper.evaluation.ledger import EvaluationLedger, EvaluationLedgerIntegrityError
 from quantmind.paper.evaluation.models import (
     MonitoringConfig,
+    MonitoringSnapshot,
     PaperEvaluationBaseline,
     PaperEvaluationRegime,
 )
@@ -1612,6 +1613,8 @@ class TestAuthoritativeRegimePersistence:
 
         # Cryptographic traceability:
         # 1. Regime binds strategy, qualification, baseline report, dataset, config protocol
+        assert res.snapshot.regime_hash == res.regime.regime_hash
+        assert res.snapshot.verify_digest()
         assert res.regime.strategy_id == res.snapshot.strategy_id
         assert res.regime.qualification_hash == res.snapshot.qualification_hash
         assert res.regime.forward_dataset_version == res.snapshot.dataset_version
@@ -1634,3 +1637,287 @@ class TestAuthoritativeRegimePersistence:
         # 4. list_regimes for strategy returns the regime
         strat_regimes = eval_ledger.list_regimes(STRATEGY_ID)
         assert any(r.regime_hash == res.regime.regime_hash for r in strat_regimes)
+
+    def test_snapshot_with_substituted_regime_hash_fails(self):
+        eval_ledger = EvaluationLedger()
+        regime = PaperEvaluationRegime.create(
+            strategy_id="STRAT-001",
+            qualification_hash="qual_hash_" + "0" * 54,
+            baseline_replay_report_hash="rep_hash_" + "0" * 55,
+            forward_dataset_version="nifty_forward_v1",
+            forward_dataset_sha256="dsha_" + "0" * 59,
+            execution_policy="market_order_v1",
+            cost_schedule_hash="csh_" + "0" * 60,
+            risk_config_hash="rch_" + "0" * 60,
+            monitoring_protocol_version="MP-1.0",
+        )
+        eval_ledger.register_regime(regime)
+
+        # Snapshot referencing a non-existent substituted regime hash
+        forged_snapshot = MonitoringSnapshot.create(
+            strategy_id="STRAT-001",
+            qualification_hash="qual_hash_" + "0" * 54,
+            replay_report_hash="rep_hash_" + "0" * 55,
+            dataset_version="nifty_forward_v1",
+            dataset_sha256="dsha_" + "0" * 59,
+            split_zone="FORWARD_PAPER",
+            monitoring_protocol_version="MP-1.0",
+            monitoring_config_hash="mch_" + "0" * 60,
+            window_start_ts="2023-06-01T09:15:00Z",
+            window_end_ts="2023-06-01T15:30:00Z",
+            total_trades=5,
+            net_pnl=100.0,
+            max_drawdown_bps=20.0,
+            realized_sharpe=1.5,
+            realized_slippage_bps=1.0,
+            cost_to_turnover_bps=5.0,
+            risk_event_count=0,
+            metrics_json="{}",
+            regime_hash="substituted_regime_hash_" + "9" * 40,
+        )
+        with pytest.raises(EvaluationLedgerIntegrityError, match="non-existent regime_hash"):
+            eval_ledger.get_or_insert_snapshot(forged_snapshot)
+
+    def _setup_registered(self):
+        paper, eval_ledger, qual, base_rep, base_binding = _setup()
+
+        reg = DatasetRegistry(":memory:")
+        reg._connection.execute(
+            "INSERT INTO datasets (version, kind, path, format, sha256, timestamp_column) VALUES (?, ?, ?, ?, ?, ?)",
+            (DATASET_VERSION, DatasetKind.LICENSED.value, "base.csv", "csv", DATASET_SHA256, "timestamp"),
+        )
+
+        fwd_version = "nifty_forward_2024_v1"
+        fwd_sha = "ab" * 32
+        reg._connection.execute(
+            "INSERT INTO datasets (version, kind, path, format, sha256, timestamp_column) VALUES (?, ?, ?, ?, ?, ?)",
+            (fwd_version, DatasetKind.LICENSED.value, "fwd.csv", "csv", fwd_sha, "timestamp"),
+        )
+
+        obs = _make_observed_report(
+            qual,
+            dataset_version=fwd_version,
+            dataset_sha256=fwd_sha,
+        )
+        paper.record_report(obs)
+        return paper, eval_ledger, qual, reg, obs
+
+    def test_snapshot_missing_regime_hash_fails_in_production(self):
+        paper, eval_ledger, qual, reg, obs = self._setup_registered()
+        config = _make_config()
+
+        service = PaperEvaluationService(allow_fixture_mode=False)
+        snap_no_regime = MonitoringSnapshot.create(
+            strategy_id=STRATEGY_ID,
+            qualification_hash=qual.record_hash,
+            replay_report_hash=obs.report_hash,
+            dataset_version=obs.dataset_version,
+            dataset_sha256=obs.dataset_sha256,
+            split_zone="FORWARD_PAPER",
+            monitoring_protocol_version=config.protocol_version,
+            monitoring_config_hash=config.compute_config_hash(),
+            window_start_ts=T0,
+            window_end_ts=T1,
+            total_trades=0,
+            net_pnl=0.0,
+            max_drawdown_bps=0.0,
+            realized_sharpe=None,
+            realized_slippage_bps=0.0,
+            cost_to_turnover_bps=0.0,
+            risk_event_count=0,
+            metrics_json="{}",
+            regime_hash="",
+        )
+        assert snap_no_regime.regime_hash == ""
+        res = service.evaluate_window(
+            strategy_id=STRATEGY_ID,
+            qualification_hash=qual.record_hash,
+            qualification_record=qual,
+            window_start_ts=T0,
+            window_end_ts=T1,
+            monitoring_config=config,
+            paper_ledger=paper,
+            evaluation_ledger=eval_ledger,
+            dataset_registry=reg,
+            observed_replay_report=obs,
+            allow_fixture_mode=False,
+        )
+        assert res.snapshot.regime_hash != ""
+        assert res.snapshot.regime_hash == res.regime.regime_hash
+
+    def test_mismatched_regime_context_rejected(self):
+        eval_ledger = EvaluationLedger()
+        regime_strat_a = PaperEvaluationRegime.create(
+            strategy_id="STRAT-A",
+            qualification_hash="qual_a_" + "0" * 57,
+            baseline_replay_report_hash="rep_a_" + "0" * 58,
+            forward_dataset_version="nifty_forward_v1",
+            forward_dataset_sha256="dsha_" + "0" * 59,
+            execution_policy="market_order_v1",
+            cost_schedule_hash="csh_" + "0" * 60,
+            risk_config_hash="rch_" + "0" * 60,
+            monitoring_protocol_version="MP-1.0",
+        )
+        eval_ledger.register_regime(regime_strat_a)
+
+        # Snapshot for STRAT-B attempting to link to STRAT-A's regime
+        mismatched_snapshot = MonitoringSnapshot.create(
+            strategy_id="STRAT-B",
+            qualification_hash="qual_b_" + "0" * 57,
+            replay_report_hash="rep_b_" + "0" * 58,
+            dataset_version="nifty_forward_v1",
+            dataset_sha256="dsha_" + "0" * 59,
+            split_zone="FORWARD_PAPER",
+            monitoring_protocol_version="MP-1.0",
+            monitoring_config_hash="mch_" + "0" * 60,
+            window_start_ts="2023-06-01T09:15:00Z",
+            window_end_ts="2023-06-01T15:30:00Z",
+            total_trades=2,
+            net_pnl=50.0,
+            max_drawdown_bps=10.0,
+            realized_sharpe=1.0,
+            realized_slippage_bps=0.5,
+            cost_to_turnover_bps=2.0,
+            risk_event_count=0,
+            metrics_json="{}",
+            regime_hash=regime_strat_a.regime_hash,
+        )
+        with pytest.raises(EvaluationLedgerIntegrityError, match="does not match bound regime context"):
+            eval_ledger.get_or_insert_snapshot(mismatched_snapshot)
+
+    def test_event_referencing_snapshot_from_another_regime_rejected(self):
+        eval_ledger = EvaluationLedger()
+        regime = PaperEvaluationRegime.create(
+            strategy_id="STRAT-001",
+            qualification_hash="qual_hash_" + "0" * 54,
+            baseline_replay_report_hash="rep_baseline_01_" + "0" * 48,
+            forward_dataset_version="nifty_forward_v1",
+            forward_dataset_sha256="dsha_" + "0" * 59,
+            execution_policy="market_order_v1",
+            cost_schedule_hash="csh_" + "0" * 60,
+            risk_config_hash="rch_" + "0" * 60,
+            monitoring_protocol_version="MP-1.0",
+        )
+        eval_ledger.register_regime(regime)
+
+        snapshot = MonitoringSnapshot.create(
+            strategy_id="STRAT-001",
+            qualification_hash="qual_hash_" + "0" * 54,
+            replay_report_hash="rep_obs_01_" + "0" * 53,
+            dataset_version="nifty_forward_v1",
+            dataset_sha256="dsha_" + "0" * 59,
+            split_zone="FORWARD_PAPER",
+            monitoring_protocol_version="MP-1.0",
+            monitoring_config_hash="mch_" + "0" * 60,
+            window_start_ts="2023-06-01T09:15:00Z",
+            window_end_ts="2023-06-01T15:30:00Z",
+            total_trades=10,
+            net_pnl=-500.0,
+            max_drawdown_bps=250.0,
+            realized_sharpe=-0.5,
+            realized_slippage_bps=5.0,
+            cost_to_turnover_bps=12.0,
+            risk_event_count=1,
+            metrics_json="{}",
+            regime_hash=regime.regime_hash,
+        )
+        eval_ledger.get_or_insert_snapshot(snapshot)
+
+        from quantmind.paper.evaluation.models import DegradationEvent
+        conflicting_event = DegradationEvent.create(
+            strategy_id="STRAT-001",
+            qualification_hash="qual_hash_" + "0" * 54,
+            snapshot_hash=snapshot.snapshot_hash,
+            rule_name="max_drawdown_expansion",
+            threshold_value=1.5,
+            observed_value=2.5,
+            monitoring_protocol_version="MP-1.0",
+            monitoring_config_hash="mch_" + "0" * 60,
+            timestamp="2023-06-01T15:30:00Z",
+            baseline_replay_report_hash="rep_conflicting_baseline_" + "0" * 39,
+        )
+        with pytest.raises(EvaluationLedgerIntegrityError, match="conflicts with snapshot's bound regime"):
+            eval_ledger.record_degradation_event(conflicting_event)
+
+    def test_repeated_identical_evaluation_remains_idempotent(self):
+        paper, eval_ledger, qual, reg, obs = self._setup_registered()
+        config = _make_config()
+
+        service = PaperEvaluationService(allow_fixture_mode=False)
+        res1 = service.evaluate_window(
+            strategy_id=STRATEGY_ID,
+            qualification_hash=qual.record_hash,
+            qualification_record=qual,
+            window_start_ts=T0,
+            window_end_ts=T1,
+            monitoring_config=config,
+            paper_ledger=paper,
+            evaluation_ledger=eval_ledger,
+            dataset_registry=reg,
+            observed_replay_report=obs,
+            allow_fixture_mode=False,
+        )
+
+        res2 = service.evaluate_window(
+            strategy_id=STRATEGY_ID,
+            qualification_hash=qual.record_hash,
+            qualification_record=qual,
+            window_start_ts=T0,
+            window_end_ts=T1,
+            monitoring_config=config,
+            paper_ledger=paper,
+            evaluation_ledger=eval_ledger,
+            dataset_registry=reg,
+            observed_replay_report=obs,
+            allow_fixture_mode=False,
+        )
+
+        assert res1.regime.regime_hash == res2.regime.regime_hash
+        assert res1.snapshot.snapshot_hash == res2.snapshot.snapshot_hash
+        assert res1.snapshot.regime_hash == res2.snapshot.regime_hash
+        assert res1.snapshot.regime_hash == res1.regime.regime_hash
+
+        regime_cnt = eval_ledger._connection.execute(
+            "SELECT COUNT(*) as cnt FROM paper_evaluation_regimes WHERE strategy_id = ?",
+            (STRATEGY_ID,),
+        ).fetchone()["cnt"]
+        snap_cnt = eval_ledger._connection.execute(
+            "SELECT COUNT(*) as cnt FROM monitoring_snapshots WHERE strategy_id = ?",
+            (STRATEGY_ID,),
+        ).fetchone()["cnt"]
+        assert regime_cnt == 1
+        assert snap_cnt == 1
+
+    def test_material_config_change_creates_distinct_regime_identity(self):
+        base_kwargs = {
+            "strategy_id": "STRAT-001",
+            "qualification_hash": "qual_" + "0" * 59,
+            "baseline_replay_report_hash": "base_" + "0" * 59,
+            "forward_dataset_version": "ds_v1",
+            "forward_dataset_sha256": "sha_" + "0" * 60,
+            "execution_policy": "exec_v1",
+            "cost_schedule_hash": "csh_" + "0" * 60,
+            "risk_config_hash": "rch_" + "0" * 60,
+            "monitoring_protocol_version": "MP-1.0",
+        }
+        base_regime = PaperEvaluationRegime.create(**base_kwargs)
+        base_hash = base_regime.regime_hash
+
+        mutations = [
+            ("forward_dataset_version", "ds_v2"),
+            ("forward_dataset_sha256", "sha_mutated_" + "1" * 52),
+            ("execution_policy", "exec_aggressive_v2"),
+            ("cost_schedule_hash", "csh_mutated_" + "2" * 52),
+            ("risk_config_hash", "rch_mutated_" + "3" * 52),
+            ("monitoring_protocol_version", "MP-2.0"),
+            ("baseline_replay_report_hash", "base_mutated_" + "4" * 50),
+            ("strategy_id", "STRAT-002"),
+            ("qualification_hash", "qual_mutated_" + "5" * 50),
+        ]
+
+        for field_name, mutated_val in mutations:
+            kwargs = dict(base_kwargs)
+            kwargs[field_name] = mutated_val
+            mutated_regime = PaperEvaluationRegime.create(**kwargs)
+            assert mutated_regime.regime_hash != base_hash, f"Mutation on {field_name} failed to create distinct regime_hash"
+            assert mutated_regime.verify_digest()

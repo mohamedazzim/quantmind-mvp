@@ -73,6 +73,20 @@ class EvaluationLedger:
         """Create tables, foreign keys, and immutability triggers deterministically."""
         self._connection.executescript(
             """
+            CREATE TABLE IF NOT EXISTS paper_evaluation_regimes (
+                regime_hash TEXT PRIMARY KEY,
+                strategy_id TEXT NOT NULL,
+                qualification_hash TEXT NOT NULL,
+                baseline_replay_report_hash TEXT NOT NULL,
+                forward_dataset_version TEXT NOT NULL,
+                forward_dataset_sha256 TEXT NOT NULL,
+                execution_policy TEXT NOT NULL,
+                cost_schedule_hash TEXT NOT NULL,
+                risk_config_hash TEXT NOT NULL,
+                monitoring_protocol_version TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS monitoring_snapshots (
                 snapshot_id TEXT PRIMARY KEY,
                 strategy_id TEXT NOT NULL,
@@ -94,7 +108,9 @@ class EvaluationLedger:
                 risk_event_count INTEGER NOT NULL,
                 metrics_json TEXT NOT NULL,
                 created_at TEXT NOT NULL,
-                snapshot_hash TEXT UNIQUE NOT NULL
+                snapshot_hash TEXT UNIQUE NOT NULL,
+                regime_hash TEXT,
+                FOREIGN KEY(regime_hash) REFERENCES paper_evaluation_regimes(regime_hash)
             );
 
             CREATE TABLE IF NOT EXISTS degradation_events (
@@ -140,20 +156,6 @@ class EvaluationLedger:
                 created_at TEXT NOT NULL,
                 binding_hash TEXT PRIMARY KEY,
                 UNIQUE(strategy_id, qualification_hash)
-            );
-
-            CREATE TABLE IF NOT EXISTS paper_evaluation_regimes (
-                regime_hash TEXT PRIMARY KEY,
-                strategy_id TEXT NOT NULL,
-                qualification_hash TEXT NOT NULL,
-                baseline_replay_report_hash TEXT NOT NULL,
-                forward_dataset_version TEXT NOT NULL,
-                forward_dataset_sha256 TEXT NOT NULL,
-                execution_policy TEXT NOT NULL,
-                cost_schedule_hash TEXT NOT NULL,
-                risk_config_hash TEXT NOT NULL,
-                monitoring_protocol_version TEXT NOT NULL,
-                created_at TEXT NOT NULL
             );
 
             -- IMMUTABILITY TRIGGERS: NO UPDATE, NO DELETE
@@ -225,6 +227,11 @@ class EvaluationLedger:
     # -----------------------------------------------------------------------
 
     def _row_to_snapshot(self, row: sqlite3.Row) -> MonitoringSnapshot:
+        regime_hash_val = (
+            row["regime_hash"]
+            if ("regime_hash" in row.keys() and row["regime_hash"] is not None)
+            else ""
+        )
         return MonitoringSnapshot(
             strategy_id=row["strategy_id"],
             qualification_hash=row["qualification_hash"],
@@ -246,6 +253,7 @@ class EvaluationLedger:
             metrics_json=row["metrics_json"],
             created_at=row["created_at"],
             snapshot_hash=row["snapshot_hash"],
+            regime_hash=regime_hash_val,
         )
 
     def _row_to_degradation_event(self, row: sqlite3.Row) -> DegradationEvent:
@@ -342,7 +350,26 @@ class EvaluationLedger:
                 )
             return existing
 
-        # 2. Verify deterministic ID does not collide with a different hash
+        # 2. Check regime reference and context if regime_hash is present
+        if snapshot.regime_hash:
+            regime_row = self._connection.execute(
+                "SELECT strategy_id, qualification_hash FROM paper_evaluation_regimes WHERE regime_hash = ?",
+                (snapshot.regime_hash,),
+            ).fetchone()
+            if regime_row is None:
+                raise EvaluationLedgerIntegrityError(
+                    f"MonitoringSnapshot references non-existent regime_hash '{snapshot.regime_hash}'"
+                )
+            if (
+                regime_row["strategy_id"] != snapshot.strategy_id
+                or regime_row["qualification_hash"] != snapshot.qualification_hash
+            ):
+                raise EvaluationLedgerIntegrityError(
+                    f"MonitoringSnapshot context (strategy={snapshot.strategy_id}, qual={snapshot.qualification_hash}) "
+                    f"does not match bound regime context (strategy={regime_row['strategy_id']}, qual={regime_row['qualification_hash']})"
+                )
+
+        # 3. Verify deterministic ID does not collide with a different hash
         id_collision = self._connection.execute(
             "SELECT snapshot_hash FROM monitoring_snapshots WHERE snapshot_id = ?",
             (snapshot.derived_snapshot_id,),
@@ -353,7 +380,7 @@ class EvaluationLedger:
                 f"'{id_collision['snapshot_hash']}'"
             )
 
-        # 3. Insert new record
+        # 4. Insert new record
         try:
             self._connection.execute(
                 """
@@ -362,8 +389,9 @@ class EvaluationLedger:
                     dataset_version, dataset_sha256, split_zone, monitoring_protocol_version,
                     monitoring_config_hash, window_start_ts, window_end_ts, total_trades,
                     net_pnl, max_drawdown_bps, realized_sharpe, realized_slippage_bps,
-                    cost_to_turnover_bps, risk_event_count, metrics_json, created_at, snapshot_hash
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    cost_to_turnover_bps, risk_event_count, metrics_json, created_at, snapshot_hash,
+                    regime_hash
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     snapshot.derived_snapshot_id,
@@ -387,6 +415,7 @@ class EvaluationLedger:
                     snapshot.metrics_json,
                     snapshot.created_at,
                     snapshot.snapshot_hash,
+                    snapshot.regime_hash if snapshot.regime_hash else None,
                 ),
             )
         except sqlite3.IntegrityError as e:
@@ -424,13 +453,33 @@ class EvaluationLedger:
 
         # 2. Check foreign key reference explicitly before insert
         snap_ref = self._connection.execute(
-            "SELECT 1 FROM monitoring_snapshots WHERE snapshot_hash = ?",
+            "SELECT strategy_id, qualification_hash, regime_hash FROM monitoring_snapshots WHERE snapshot_hash = ?",
             (event.snapshot_hash,),
         ).fetchone()
         if snap_ref is None:
             raise EvaluationLedgerIntegrityError(
                 f"DegradationEvent references non-existent snapshot_hash '{event.snapshot_hash}'"
             )
+
+        if (
+            snap_ref["strategy_id"] != event.strategy_id
+            or snap_ref["qualification_hash"] != event.qualification_hash
+        ):
+            raise EvaluationLedgerIntegrityError(
+                f"DegradationEvent context (strategy={event.strategy_id}, qual={event.qualification_hash}) "
+                f"does not match referenced snapshot context (strategy={snap_ref['strategy_id']}, qual={snap_ref['qualification_hash']})"
+            )
+
+        if snap_ref["regime_hash"]:
+            reg_row = self._connection.execute(
+                "SELECT baseline_replay_report_hash FROM paper_evaluation_regimes WHERE regime_hash = ?",
+                (snap_ref["regime_hash"],),
+            ).fetchone()
+            if reg_row is not None and reg_row["baseline_replay_report_hash"] != event.baseline_replay_report_hash:
+                raise EvaluationLedgerIntegrityError(
+                    f"DegradationEvent baseline_replay_report_hash '{event.baseline_replay_report_hash}' "
+                    f"conflicts with snapshot's bound regime baseline_replay_report_hash '{reg_row['baseline_replay_report_hash']}'"
+                )
 
         # 3. Check ID collision
         id_collision = self._connection.execute(

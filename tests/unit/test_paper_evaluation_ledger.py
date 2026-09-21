@@ -192,6 +192,7 @@ class TestEvaluationLedgerSchema:
         assert "snapshot_hash" in snap_cols
         assert "cost_to_turnover_bps" in snap_cols
         assert "strategy_id" in snap_cols
+        assert "regime_hash" in snap_cols
 
         # Check columns of degradation_events
         deg_cols = {

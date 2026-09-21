@@ -144,6 +144,7 @@ class MonitoringSnapshot:
     metrics_json: str
     created_at: str
     snapshot_hash: str
+    regime_hash: str = ""
 
     def __post_init__(self) -> None:
         if not self.strategy_id:
@@ -222,6 +223,9 @@ class MonitoringSnapshot:
             "window_end_ts": str(self.window_end_ts),
             "window_start_ts": str(self.window_start_ts),
         }
+        if self.regime_hash:
+            d["regime_hash"] = str(self.regime_hash)
+        return d
 
     def canonical_json(self) -> str:
         """Produce deterministic canonical JSON string."""
@@ -258,6 +262,7 @@ class MonitoringSnapshot:
         risk_event_count: int,
         metrics_json: str,
         created_at: str | None = None,
+        regime_hash: str = "",
     ) -> MonitoringSnapshot:
         """Factory method to instantiate an immutable MonitoringSnapshot with computed hash."""
         now_ts = created_at or datetime.now(timezone.utc).isoformat()
@@ -282,6 +287,7 @@ class MonitoringSnapshot:
             metrics_json=metrics_json,
             created_at=now_ts,
             snapshot_hash="",
+            regime_hash=regime_hash,
         )
         digest = temp.compute_hash()
         return cls(
@@ -305,6 +311,7 @@ class MonitoringSnapshot:
             metrics_json=metrics_json,
             created_at=now_ts,
             snapshot_hash=digest,
+            regime_hash=regime_hash,
         )
 
 

@@ -340,7 +340,24 @@ class PaperEvaluationService:
             obs_split_zone = baseline.baseline_split_zone
 
         # ------------------------------------------------------------------
-        # Phase 10: Construct MonitoringSnapshot
+        # Phase 10: Create and register authoritative PaperEvaluationRegime
+        # ------------------------------------------------------------------
+        regime = PaperEvaluationRegime.create(
+            strategy_id=strategy_id,
+            qualification_hash=qualification_hash,
+            baseline_replay_report_hash=baseline.baseline_replay_report_hash,
+            forward_dataset_version=obs_dataset_version,
+            forward_dataset_sha256=obs_dataset_sha256,
+            execution_policy=baseline.baseline_execution_policy,
+            cost_schedule_hash=baseline.baseline_cost_schedule_hash,
+            risk_config_hash=baseline.baseline_risk_config_hash,
+            monitoring_protocol_version=monitoring_config.protocol_version,
+            created_at=window_end_ts,
+        )
+        regime = evaluation_ledger.register_regime(regime)
+
+        # ------------------------------------------------------------------
+        # Phase 11: Construct MonitoringSnapshot bound to regime.regime_hash
         # created_at = window_end_ts → deterministic across re-evaluations.
         # created_at is excluded from canonical_dict/snapshot_hash by design.
         # ------------------------------------------------------------------
@@ -364,15 +381,21 @@ class PaperEvaluationService:
             risk_event_count=metrics["risk_event_count"],
             metrics_json=metrics_json,
             created_at=window_end_ts,
+            regime_hash=regime.regime_hash,
         )
 
+        if not is_fixture and not snapshot.regime_hash:
+            raise PaperEvaluationServiceError(
+                f"MonitoringSnapshot missing authoritative regime_hash in production mode for strategy '{strategy_id}'"
+            )
+
         # ------------------------------------------------------------------
-        # Phase 11: Persist Snapshot (idempotent)
+        # Phase 12: Persist Snapshot (idempotent)
         # ------------------------------------------------------------------
         snapshot = evaluation_ledger.get_or_insert_snapshot(snapshot)
 
         # ------------------------------------------------------------------
-        # Phase 12: Run DegradationDetector — zero DB access inside detector
+        # Phase 13: Run DegradationDetector — zero DB access inside detector
         # ------------------------------------------------------------------
         detector = DegradationDetector(config=monitoring_config, baseline=baseline)
         degradation_events = detector.evaluate(
@@ -386,27 +409,13 @@ class PaperEvaluationService:
         )
 
         # ------------------------------------------------------------------
-        # Phase 13: Persist DegradationEvents (idempotent)
+        # Phase 14: Persist DegradationEvents (idempotent)
         # Events are already sorted deterministically by rule_name from detector.
         # ------------------------------------------------------------------
         persisted_events: list[DegradationEvent] = []
         for event in degradation_events:
             persisted = evaluation_ledger.record_degradation_event(event)
             persisted_events.append(persisted)
-
-        regime = PaperEvaluationRegime.create(
-            strategy_id=strategy_id,
-            qualification_hash=qualification_hash,
-            baseline_replay_report_hash=baseline.baseline_replay_report_hash,
-            forward_dataset_version=obs_dataset_version,
-            forward_dataset_sha256=obs_dataset_sha256,
-            execution_policy=baseline.baseline_execution_policy,
-            cost_schedule_hash=baseline.baseline_cost_schedule_hash,
-            risk_config_hash=baseline.baseline_risk_config_hash,
-            monitoring_protocol_version=monitoring_config.protocol_version,
-            created_at=window_end_ts,
-        )
-        regime = evaluation_ledger.register_regime(regime)
 
         return EvaluationResult(
             snapshot=snapshot,
