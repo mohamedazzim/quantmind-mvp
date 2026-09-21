@@ -64,6 +64,7 @@ class PaperReplayEngine:
         enforce_session_boundaries: bool = True,
         dataset_registry: DatasetRegistry | None = None,
         expected_protocol_version: str | None = None,
+        allow_fixture_feed: bool = False,
     ) -> None:
         self.ledger = ledger or PaperLedger()
         self.risk_engine = PaperRiskEngine(risk_config)
@@ -72,12 +73,34 @@ class PaperReplayEngine:
         self.enforce_session_boundaries = enforce_session_boundaries
         self.dataset_registry = dataset_registry
         self.expected_protocol_version = expected_protocol_version
+        self.allow_fixture_feed = allow_fixture_feed
 
     def _round_to_tick(self, price: float, tick_size: float) -> float:
         """Round price to nearest valid tick increment."""
         if tick_size <= 0:
             return price
         return round(round(price / tick_size) * tick_size, 4)
+
+    def run_fixture_replay(
+        self,
+        qualification_record: StrategyQualificationRecord,
+        strategy_spec: StrategySpec,
+        feed: ReplayFeed,
+        *,
+        initial_capital: float = 100_000.0,
+        quantity: int = 1,
+        hold_bars: int = 1,
+    ) -> ReplayReport:
+        """Explicit fixture/test replay path for non-production execution with synthetic/fixture data."""
+        return self.run_replay(
+            qualification_record,
+            strategy_spec,
+            feed,
+            initial_capital=initial_capital,
+            quantity=quantity,
+            hold_bars=hold_bars,
+            allow_fixture_feed=True,
+        )
 
     def run_replay(
         self,
@@ -88,6 +111,7 @@ class PaperReplayEngine:
         initial_capital: float = 100_000.0,
         quantity: int = 1,
         hold_bars: int = 1,
+        allow_fixture_feed: bool | None = None,
     ) -> ReplayReport:
         # 0. Strict type verification (fail closed against fake/duck-typed objects or subclass hijacks)
         if type(qualification_record) is not StrategyQualificationRecord:
@@ -147,14 +171,27 @@ class PaperReplayEngine:
                 f"strategy spec hash '{expected_spec_hash}'"
             )
 
-        # 4. Dataset scope & registry verification
+        # 4. Prohibit sealed holdout access unconditionally
+        if feed.split_zone == SplitZone.FINAL_HOLDOUT.value:
+            raise MarketFeedSecurityError("Paper replay cannot execute against the sealed FINAL_HOLDOUT partition")
+
+        # 5. Dataset scope & registry verification
         if not feed.dataset_version or feed.dataset_version != qualification_record.dataset_version:
             raise PaperReplaySecurityError(
                 f"ReplayFeed dataset_version '{feed.dataset_version}' does not match qualification record "
                 f"dataset_version '{qualification_record.dataset_version}'"
             )
 
-        if self.dataset_registry is not None:
+        is_fixture = allow_fixture_feed if allow_fixture_feed is not None else self.allow_fixture_feed
+
+        if not is_fixture:
+            if self.dataset_registry is None:
+                raise PaperReplaySecurityError(
+                    "Production paper replay requires an authoritative DatasetRegistry. "
+                    "Unregistered execution is prohibited in production mode. "
+                    "For test fixtures, instantiate PaperReplayEngine(allow_fixture_feed=True) "
+                    "or call run_fixture_replay()."
+                )
             reg_entry = self.dataset_registry.get(qualification_record.dataset_version)
             if reg_entry is None:
                 raise PaperReplaySecurityError(
@@ -173,17 +210,14 @@ class PaperReplayEngine:
             if not feed.is_authoritative:
                 raise PaperReplaySecurityError(
                     f"Production replay against registered dataset '{feed.dataset_version}' requires an authoritative "
-                    "ReplayFeed instantiated via ReplayFeed.from_dataset_registry()"
+                    "ReplayFeed instantiated via ReplayFeed.from_dataset_registry(). "
+                    "Unverified in-memory feeds are prohibited in production mode."
                 )
             if feed.dataset_sha256 != qualification_record.dataset_sha256:
                 raise PaperReplaySecurityError(
                     f"ReplayFeed dataset_sha256 '{feed.dataset_sha256}' does not match "
                     f"qualification record dataset_sha256 '{qualification_record.dataset_sha256}'"
                 )
-
-        # 5. Prohibit sealed holdout access
-        if feed.split_zone == SplitZone.FINAL_HOLDOUT.value:
-            raise MarketFeedSecurityError("Paper replay cannot execute against the sealed FINAL_HOLDOUT partition")
 
         # 6. Compile strategy signal function
         signal_fn = compile_strategy_spec(norm_spec)

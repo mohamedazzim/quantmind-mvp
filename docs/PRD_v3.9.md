@@ -161,26 +161,42 @@ The `PaperRiskEngine` maintains deterministic intra-session portfolio state:
 ### 4.2 Tamper Resistance, Provenance Closure & Immutability
 - `PaperLedger` rejects both `DELETE` and `UPDATE` SQL queries via SQLite database triggers across all 5 tables: `paper_orders`, `paper_fills`, `paper_risk_events`, `paper_positions`, and `paper_reports`.
 - `paper_reports` enforces primary key uniqueness on `report_hash`, preventing report overwriting or state mutation.
-- `ReplayReport` cryptographically binds all 19 result-affecting parameters into its canonical representation and `report_hash`:
-  1. `strategy_spec_hash`: SHA-256 of normalized strategy spec
-  2. `qualification_hash`: SHA-256 audit digest of `StrategyQualificationRecord`
-  3. `dataset_version`: Authoritative dataset version string
-  4. `dataset_sha256`: SHA-256 disk checksum of market dataset
-  5. `research_protocol_version`: Governed research protocol version
-  6. `symbol`: Instrument symbol
-  7. `lot_size`: Contract lot multiplier
-  8. `tick_size`: Instrument minimum price increment
-  9. `slippage_bps_per_side`: Slippage applied per side in bps
-  10. `cost_schedule_id`: Identifier of applied transaction fee schedule
-  11. `cost_schedule_hash`: SHA-256 over canonical schedule periods and rates
-  12. `risk_config_hash`: SHA-256 over canonical risk limit parameters
-  13. `execution_policy`: Locked execution model identifier (`next_bar_open_v1`)
-  14. `quantity`: Order size in contracts
-  15. `hold_bars`: Trade holding horizon in bars
-  16. `initial_capital`: Replay capital base in currency units
-  17. `enforce_session_boundaries`: Boolean flag controlling intra-day liquidation
-  18. `split_zone`: Authoritative dataset split partition (`FORWARD_PAPER`)
-  19. `bars_sha256`: SHA-256 digest of immutable contiguous raw bar buffers
+- `ReplayReport` cryptographically binds all thirty-two (32) canonical fields into its canonical JSON representation (`canonical_dict()`) and SHA-256 `report_hash`:
+  - **21 Replay Input, Specification, & Provenance Identity Fields**:
+    1. `bars_sha256`: SHA-256 digest of immutable contiguous raw bar buffers
+    2. `cost_schedule_hash`: SHA-256 over canonical schedule periods and rates
+    3. `cost_schedule_id`: Identifier of applied transaction fee schedule
+    4. `dataset_sha256`: SHA-256 disk checksum of market dataset
+    5. `dataset_version`: Authoritative dataset version string
+    6. `enforce_session_boundaries`: Boolean flag controlling intra-day liquidation
+    7. `execution_policy`: Locked execution model identifier (`next_bar_open_v1`)
+    8. `hold_bars`: Trade holding horizon in bars
+    9. `initial_capital`: Replay capital base in currency units
+    10. `lot_size`: Contract lot multiplier
+    11. `qualification_hash`: SHA-256 audit digest of `StrategyQualificationRecord`
+    12. `qualification_id`: Authoritative qualification record identifier
+    13. `quantity`: Order size in contracts
+    14. `research_protocol_version`: Governed research protocol version
+    15. `risk_config_hash`: SHA-256 over canonical risk limit parameters
+    16. `slippage_bps_per_side`: Slippage applied per side in bps
+    17. `split_zone`: Authoritative dataset split partition (`FORWARD_PAPER`)
+    18. `strategy_id`: Canonical normalized strategy identifier
+    19. `strategy_spec_hash`: SHA-256 of normalized strategy spec
+    20. `symbol`: Instrument symbol
+    21. `tick_size`: Instrument minimum price increment
+  - **11 Observational Performance & P&L Outcome Fields**:
+    22. `costs`: Total transaction fees paid (rounded to 4 decimals)
+    23. `expectancy`: Average trade expectancy per trade (rounded to 4 decimals)
+    24. `exposure`: Peak portfolio gross exposure (rounded to 4 decimals)
+    25. `gross_pnl`: Gross trading profit and loss (rounded to 4 decimals)
+    26. `max_drawdown_bps`: Peak-to-trough equity drawdown in bps (rounded to 4 decimals)
+    27. `net_pnl`: Net trading profit and loss after costs and slippage (rounded to 4 decimals)
+    28. `session_breakdown`: Canonical list of serialized per-session summaries
+    29. `sharpe_ratio`: Annualized Sharpe ratio (rounded to 4 decimals, or null)
+    30. `slippage`: Total slippage cost realized (rounded to 4 decimals)
+    31. `trade_count`: Total executed round-trip trade count
+    32. `win_rate`: Ratio of profitable trades (rounded to 4 decimals)
+- **Temporal Determinism Invariant**: `created_at` is preserved on the `ReplayReport` record for administrative logging but is strictly excluded from `canonical_dict()` and `report_hash`, ensuring that executing replay today versus tomorrow against identical inputs yields bitwise identical `report_hash` digests.
 - Replay engine rejects any qualification record where `record.verify_digest()` fails.
 - `ReplayFeed` enforces strict preflight validation: rejects empty datasets, missing columns, NaNs, infinities, non-monotonic or duplicate timestamps, non-positive prices, and invalid OHLC bounds (`high < low`, `high < open`, etc.). Disk checksums are verified against the registry via SHA-256 before loading.
 - `PaperRiskEngine` scales exposure calculations by contract `lot_size` ($Q \times P \times \text{lot\_size}$) and guarantees risk-reducing liquidation orders cannot be trapped if drawdown or loss thresholds are breached.
@@ -189,8 +205,14 @@ The `PaperRiskEngine` maintains deterministic intra-session portfolio state:
 - Live broker execution is completely excluded by design.
 - No network APIs, credentials, or live order routing endpoints exist.
 
-### 4.4 Replay Boundary Isolation & Anti-Bypass Hardening
+### 4.4 Replay Boundary Isolation, Anti-Bypass Hardening & Execution Modes
 - **Exact Type Enforcement**: `PaperReplayEngine.run_replay` rejects subclasses of `StrategyQualificationRecord`, `StrategySpec`, and `ReplayFeed` (`type(feed) is not ReplayFeed`), closing class-inheritance hijacking and method override vulnerabilities.
 - **In-Memory Buffer Immutability**: All 8 columnar NumPy arrays (`_timestamps`, `_opens`, `_highs`, `_lows`, `_closes`, `_volumes`, `_open_interests`, `_session_ids`) in `ReplayFeed` are frozen (`flags.writeable = False`). In-place price modifications or TOCTOU mutations are prevented at the memory level.
-- **Authoritative Registry Feed Verification**: Replay feeds created from `DatasetRegistry.from_dataset_registry` are authenticated (`feed.is_authoritative = True`) and bind `feed.dataset_sha256`. Production replay against registered datasets requires authoritative feeds, rejecting unverified direct constructor feeds.
-- **Sealed Partition Isolation**: Access to `SplitZone.FINAL_HOLDOUT` is systematically prohibited across `ReplayFeed.__init__`, `ReplayFeed.from_dataset_registry`, `DatasetRegistry.load_zone`, and `PaperReplayEngine.run_replay`.
+- **Production Replay Registry Requirement**:
+  - In production mode (`allow_fixture_feed=False`, the secure default), `PaperReplayEngine` strictly mandates an authoritative `DatasetRegistry` (`self.dataset_registry is not None`).
+  - Production replay strictly verifies that the dataset is registered, has matching `dataset_sha256`, is of kind `DatasetKind.LICENSED`, and was loaded via `ReplayFeed.from_dataset_registry()` (`feed.is_authoritative is True`).
+  - Any attempt to run production replay without a registry, or with an unverified direct in-memory feed, immediately raises `PaperReplaySecurityError`.
+- **Explicit Test Fixture Replay Separation**:
+  - Unit tests and synthetic fixtures cannot silently pass as production replays.
+  - Fixture execution requires explicit opt-in via `PaperReplayEngine(allow_fixture_feed=True)` or calling `engine.run_fixture_replay(...)`.
+- **Sealed Partition Isolation**: Access to `SplitZone.FINAL_HOLDOUT` is systematically prohibited across `ReplayFeed.__init__`, `ReplayFeed.from_dataset_registry`, `DatasetRegistry.load_zone`, and `PaperReplayEngine.run_replay`. The holdout partition is checked unconditionally before dataset registry lookup or replay compilation.

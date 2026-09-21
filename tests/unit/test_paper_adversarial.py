@@ -119,6 +119,11 @@ def _make_clean_feed(
     )
 
 
+def _make_fixture_engine(*args, **kwargs) -> PaperReplayEngine:
+    kwargs.setdefault("allow_fixture_feed", True)
+    return PaperReplayEngine(*args, **kwargs)
+
+
 # ==============================================================================
 # PHASE 2: QUALIFICATION BOUNDARY ADVERSARIAL AUDIT
 # ==============================================================================
@@ -238,7 +243,7 @@ class TestExecutionSemanticsCausality:
             }
         )
         feed = ReplayFeed(df, dataset_version="DS-TEST-2023")
-        engine = PaperReplayEngine()
+        engine = _make_fixture_engine()
 
         report = engine.run_replay(record, spec, feed)
         fills = engine.ledger.get_fills()
@@ -250,7 +255,7 @@ class TestExecutionSemanticsCausality:
         spec = _make_spec()
         record = _make_valid_record(spec)
         feed = _make_clean_feed(n=10)
-        engine = PaperReplayEngine()
+        engine = _make_fixture_engine()
 
         engine.run_replay(record, spec, feed, hold_bars=2)
         orders = engine.ledger.get_orders()
@@ -282,7 +287,7 @@ class TestExecutionSemanticsCausality:
             }
         )
         feed = ReplayFeed(df, dataset_version="DS-TEST-2023")
-        engine = PaperReplayEngine(enforce_session_boundaries=True)
+        engine = _make_fixture_engine(enforce_session_boundaries=True)
 
         report = engine.run_replay(record, spec, feed, hold_bars=10)
         # Even with hold_bars=10, the trade must have closed due to session boundary
@@ -323,7 +328,7 @@ class TestCostAndSlippageMath:
                 ),
             ),
         )
-        engine = PaperReplayEngine(cost_schedule=schedule, slippage_bps_per_side=0.0)
+        engine = _make_fixture_engine(cost_schedule=schedule, slippage_bps_per_side=0.0)
 
         report = engine.run_replay(record, spec, feed, quantity=1, hold_bars=1)
         fills = engine.ledger.get_fills()
@@ -347,7 +352,7 @@ class TestCostAndSlippageMath:
         spec = _make_spec()
         record = _make_valid_record(spec)
         feed = _make_clean_feed(n=6)
-        engine = PaperReplayEngine(cost_schedule=None, slippage_bps_per_side=0.0)
+        engine = _make_fixture_engine(cost_schedule=None, slippage_bps_per_side=0.0)
 
         report = engine.run_replay(record, spec, feed, hold_bars=1)
         assert report.costs == 0.0
@@ -479,8 +484,8 @@ class TestReplayDeterminismAndProvenance:
         feed1 = _make_clean_feed(n=10)
         feed2 = _make_clean_feed(n=10)
 
-        engine1 = PaperReplayEngine(slippage_bps_per_side=2.0)
-        engine2 = PaperReplayEngine(slippage_bps_per_side=2.0)
+        engine1 = _make_fixture_engine(slippage_bps_per_side=2.0)
+        engine2 = _make_fixture_engine(slippage_bps_per_side=2.0)
 
         report1 = engine1.run_replay(record, spec, feed1, hold_bars=2)
         report2 = engine2.run_replay(record, spec, feed2, hold_bars=2)
@@ -501,7 +506,7 @@ class TestReplayDeterminismAndProvenance:
         spec = _make_spec()
         record = _make_valid_record(spec)
         feed = _make_clean_feed(n=10)
-        engine = PaperReplayEngine()
+        engine = _make_fixture_engine()
 
         report = engine.run_replay(record, spec, feed, hold_bars=2)
         canon = report.canonical_dict()
@@ -831,8 +836,8 @@ class TestProvenanceClosureAdversarial:
         feed1 = _make_clean_feed(n=10)
         feed2 = _make_clean_feed(n=10)
 
-        engine1 = PaperReplayEngine(risk_config=PaperRiskConfig(max_position=10))
-        engine2 = PaperReplayEngine(risk_config=PaperRiskConfig(max_position=5))
+        engine1 = _make_fixture_engine(risk_config=PaperRiskConfig(max_position=10))
+        engine2 = _make_fixture_engine(risk_config=PaperRiskConfig(max_position=5))
 
         report1 = engine1.run_replay(record, spec, feed1)
         report2 = engine2.run_replay(record, spec, feed2)
@@ -868,8 +873,8 @@ class TestProvenanceClosureAdversarial:
             ),
         )
 
-        engine1 = PaperReplayEngine(cost_schedule=sched1)
-        engine2 = PaperReplayEngine(cost_schedule=sched2)
+        engine1 = _make_fixture_engine(cost_schedule=sched1)
+        engine2 = _make_fixture_engine(cost_schedule=sched2)
 
         report1 = engine1.run_replay(record, spec, feed1)
         report2 = engine2.run_replay(record, spec, feed2)
@@ -884,8 +889,8 @@ class TestProvenanceClosureAdversarial:
         record = _make_valid_record(spec)
         feed1 = _make_clean_feed(n=10)
         feed2 = _make_clean_feed(n=10)
-        engine1 = PaperReplayEngine()
-        engine2 = PaperReplayEngine()
+        engine1 = _make_fixture_engine()
+        engine2 = _make_fixture_engine()
 
         report1 = engine1.run_replay(record, spec, feed1, quantity=1)
         report2 = engine2.run_replay(record, spec, feed2, quantity=2)
@@ -899,8 +904,8 @@ class TestProvenanceClosureAdversarial:
         record = _make_valid_record(spec)
         feed1 = _make_clean_feed(n=10)
         feed2 = _make_clean_feed(n=10)
-        engine1 = PaperReplayEngine()
-        engine2 = PaperReplayEngine()
+        engine1 = _make_fixture_engine()
+        engine2 = _make_fixture_engine()
 
         report1 = engine1.run_replay(record, spec, feed1, hold_bars=1)
         report2 = engine2.run_replay(record, spec, feed2, hold_bars=3)
@@ -915,8 +920,8 @@ class TestProvenanceClosureAdversarial:
         feed1 = _make_clean_feed(n=10)
         feed2 = _make_clean_feed(n=10)
 
-        engine1 = PaperReplayEngine(enforce_session_boundaries=True)
-        engine2 = PaperReplayEngine(enforce_session_boundaries=False)
+        engine1 = _make_fixture_engine(enforce_session_boundaries=True)
+        engine2 = _make_fixture_engine(enforce_session_boundaries=False)
 
         report1 = engine1.run_replay(record, spec, feed1)
         report2 = engine2.run_replay(record, spec, feed2)
@@ -970,8 +975,8 @@ class TestProvenanceClosureAdversarial:
         feed1 = _make_clean_feed(n=10)
         feed2 = _make_clean_feed(n=10)
 
-        engine1 = PaperReplayEngine(slippage_bps_per_side=0.0)
-        engine2 = PaperReplayEngine(slippage_bps_per_side=5.0)
+        engine1 = _make_fixture_engine(slippage_bps_per_side=0.0)
+        engine2 = _make_fixture_engine(slippage_bps_per_side=5.0)
 
         report1 = engine1.run_replay(record, spec, feed1)
         report2 = engine2.run_replay(record, spec, feed2)
@@ -985,8 +990,8 @@ class TestProvenanceClosureAdversarial:
         record = _make_valid_record(spec)
         feed1 = _make_clean_feed(n=10, tick_size=0.05)
         feed2 = _make_clean_feed(n=10, tick_size=0.10)
-        engine1 = PaperReplayEngine()
-        engine2 = PaperReplayEngine()
+        engine1 = _make_fixture_engine()
+        engine2 = _make_fixture_engine()
 
         report1 = engine1.run_replay(record, spec, feed1)
         report2 = engine2.run_replay(record, spec, feed2)
@@ -1000,8 +1005,8 @@ class TestProvenanceClosureAdversarial:
         record = _make_valid_record(spec)
         feed1 = _make_clean_feed(n=10, lot_size=50)
         feed2 = _make_clean_feed(n=10, lot_size=25)
-        engine1 = PaperReplayEngine()
-        engine2 = PaperReplayEngine()
+        engine1 = _make_fixture_engine()
+        engine2 = _make_fixture_engine()
 
         report1 = engine1.run_replay(record, spec, feed1)
         report2 = engine2.run_replay(record, spec, feed2)
@@ -1016,8 +1021,8 @@ class TestProvenanceClosureAdversarial:
         record2 = _make_valid_record(spec, dataset_sha256="dsha-beta-2222")
         feed1 = _make_clean_feed(n=10)
         feed2 = _make_clean_feed(n=10)
-        engine1 = PaperReplayEngine()
-        engine2 = PaperReplayEngine()
+        engine1 = _make_fixture_engine()
+        engine2 = _make_fixture_engine()
 
         report1 = engine1.run_replay(record1, spec, feed1)
         report2 = engine2.run_replay(record2, spec, feed2)
@@ -1031,8 +1036,8 @@ class TestProvenanceClosureAdversarial:
         record = _make_valid_record(spec)
         feed1 = _make_clean_feed(n=10)
         feed2 = _make_clean_feed(n=10)
-        engine1 = PaperReplayEngine()
-        engine2 = PaperReplayEngine()
+        engine1 = _make_fixture_engine()
+        engine2 = _make_fixture_engine()
 
         report1 = engine1.run_replay(record, spec, feed1, initial_capital=100_000.0)
         report2 = engine2.run_replay(record, spec, feed2, initial_capital=500_000.0)
@@ -1047,7 +1052,7 @@ class TestProvenanceClosureAdversarial:
         spec = _make_spec()
         record = _make_valid_record(spec)
         feed = _make_clean_feed(n=10)
-        engine = PaperReplayEngine()
+        engine = _make_fixture_engine()
 
         report = engine.run_replay(record, spec, feed)
         with pytest.raises(dataclasses.FrozenInstanceError):
@@ -1261,8 +1266,8 @@ class TestReplayBoundaryAndFeedHardeningAdversarial:
 
         assert feed1.bars_sha256 != feed2.bars_sha256
 
-        engine1 = PaperReplayEngine()
-        engine2 = PaperReplayEngine()
+        engine1 = _make_fixture_engine()
+        engine2 = _make_fixture_engine()
 
         report1 = engine1.run_replay(record, spec, feed1)
         report2 = engine2.run_replay(record, spec, feed2)
@@ -1311,3 +1316,192 @@ class TestReplayBoundaryAndFeedHardeningAdversarial:
         engine = PaperReplayEngine()
         with pytest.raises(MarketFeedSecurityError, match="FINAL_HOLDOUT"):
             engine.run_replay(record, spec, feed)
+
+    def test_changing_strategy_id_changes_report_hash(self) -> None:
+        """Changing strategy_id produces a distinct report_hash."""
+        report1 = ReplayReport.create(
+            strategy_id="STRAT-ALPHA",
+            qualification_id="QUAL-1",
+            dataset_version="DS-1",
+            trade_count=0,
+            gross_pnl=0.0,
+            net_pnl=0.0,
+            costs=0.0,
+            slippage=0.0,
+            max_drawdown_bps=0.0,
+            exposure=0.0,
+            win_rate=0.0,
+            expectancy=0.0,
+            sharpe_ratio=None,
+            session_breakdown=[],
+        )
+        report2 = ReplayReport.create(
+            strategy_id="STRAT-BETA",
+            qualification_id="QUAL-1",
+            dataset_version="DS-1",
+            trade_count=0,
+            gross_pnl=0.0,
+            net_pnl=0.0,
+            costs=0.0,
+            slippage=0.0,
+            max_drawdown_bps=0.0,
+            exposure=0.0,
+            win_rate=0.0,
+            expectancy=0.0,
+            sharpe_ratio=None,
+            session_breakdown=[],
+        )
+        assert report1.strategy_id != report2.strategy_id
+        assert report1.report_hash != report2.report_hash
+
+    def test_changing_qualification_id_changes_report_hash(self) -> None:
+        """Changing qualification_id produces a distinct report_hash."""
+        report1 = ReplayReport.create(
+            strategy_id="STRAT-1",
+            qualification_id="QUAL-ALPHA",
+            dataset_version="DS-1",
+            trade_count=0,
+            gross_pnl=0.0,
+            net_pnl=0.0,
+            costs=0.0,
+            slippage=0.0,
+            max_drawdown_bps=0.0,
+            exposure=0.0,
+            win_rate=0.0,
+            expectancy=0.0,
+            sharpe_ratio=None,
+            session_breakdown=[],
+        )
+        report2 = ReplayReport.create(
+            strategy_id="STRAT-1",
+            qualification_id="QUAL-BETA",
+            dataset_version="DS-1",
+            trade_count=0,
+            gross_pnl=0.0,
+            net_pnl=0.0,
+            costs=0.0,
+            slippage=0.0,
+            max_drawdown_bps=0.0,
+            exposure=0.0,
+            win_rate=0.0,
+            expectancy=0.0,
+            sharpe_ratio=None,
+            session_breakdown=[],
+        )
+        assert report1.qualification_id != report2.qualification_id
+        assert report1.report_hash != report2.report_hash
+
+    def test_canonical_provenance_schema_exact_32_fields(self) -> None:
+        """ReplayReport.canonical_dict() strictly contains exactly 32 canonical keys."""
+        spec = _make_spec()
+        record = _make_valid_record(spec)
+        feed = _make_clean_feed(n=10)
+        engine = _make_fixture_engine()
+
+        report = engine.run_replay(record, spec, feed)
+        canonical = report.canonical_dict()
+
+        expected_inputs_21 = {
+            "bars_sha256",
+            "cost_schedule_hash",
+            "cost_schedule_id",
+            "dataset_sha256",
+            "dataset_version",
+            "enforce_session_boundaries",
+            "execution_policy",
+            "hold_bars",
+            "initial_capital",
+            "lot_size",
+            "qualification_hash",
+            "qualification_id",
+            "quantity",
+            "research_protocol_version",
+            "risk_config_hash",
+            "slippage_bps_per_side",
+            "split_zone",
+            "strategy_id",
+            "strategy_spec_hash",
+            "symbol",
+            "tick_size",
+        }
+
+        expected_metrics_11 = {
+            "costs",
+            "expectancy",
+            "exposure",
+            "gross_pnl",
+            "max_drawdown_bps",
+            "net_pnl",
+            "session_breakdown",
+            "sharpe_ratio",
+            "slippage",
+            "trade_count",
+            "win_rate",
+        }
+
+        expected_all_32 = expected_inputs_21 | expected_metrics_11
+        assert len(expected_all_32) == 32
+        assert set(canonical.keys()) == expected_all_32
+        assert "created_at" not in canonical
+
+    def test_engine_registry_requirement_and_execution_paths(self, tmp_path) -> None:
+        """Adversarial verification of the 4 engine x feed construction paths:
+        Path A: Engine(dataset_registry=None) + direct feed -> raises PaperReplaySecurityError
+        Path B: Engine(dataset_registry=reg) + direct feed -> raises PaperReplaySecurityError
+        Path C: Engine(dataset_registry=None) + authoritative feed -> raises PaperReplaySecurityError
+        Path D: Engine(dataset_registry=reg) + authoritative feed -> SUCCEEDS
+        Fixture Path: Engine(allow_fixture_feed=True) or run_fixture_replay() -> SUCCEEDS with fixture feed
+        """
+        df = pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2023-01-01 09:15", periods=5, freq="1min"),
+                "open": [100.0, 101.0, 102.0, 103.0, 104.0],
+                "high": [102.0, 103.0, 104.0, 105.0, 106.0],
+                "low": [99.0, 100.0, 101.0, 102.0, 103.0],
+                "close": [101.0, 102.0, 103.0, 104.0, 105.0],
+            }
+        )
+        csv_file = tmp_path / "bars.csv"
+        df.to_csv(csv_file, index=False)
+
+        db_file = tmp_path / "registry.db"
+        registry = DatasetRegistry(db_file)
+        reg_entry = registry.register_file(
+            version="DS-LIC-AUTH",
+            kind=DatasetKind.LICENSED,
+            path=csv_file,
+            timestamp_column="timestamp",
+        )
+
+        spec = _make_spec()
+        record = _make_valid_record(spec, dataset_version="DS-LIC-AUTH", dataset_sha256=reg_entry.sha256)
+
+        # Path A: Engine without registry + direct unverified feed
+        feed_direct = ReplayFeed(df, dataset_version="DS-LIC-AUTH")
+        prod_engine_no_reg = PaperReplayEngine()
+        with pytest.raises(PaperReplaySecurityError, match="Production paper replay requires an authoritative DatasetRegistry"):
+            prod_engine_no_reg.run_replay(record, spec, feed_direct)
+
+        # Path B: Engine with registry + direct unverified feed
+        prod_engine_with_reg = PaperReplayEngine(dataset_registry=registry)
+        with pytest.raises(PaperReplaySecurityError, match="requires an authoritative ReplayFeed instantiated via ReplayFeed.from_dataset_registry"):
+            prod_engine_with_reg.run_replay(record, spec, feed_direct)
+
+        # Path C: Engine without registry + authoritative feed
+        feed_auth = ReplayFeed.from_dataset_registry(registry, "DS-LIC-AUTH", split_zone=SplitZone.FORWARD_PAPER)
+        with pytest.raises(PaperReplaySecurityError, match="Production paper replay requires an authoritative DatasetRegistry"):
+            prod_engine_no_reg.run_replay(record, spec, feed_auth)
+
+        # Path D: Engine with registry + authoritative feed (Production Path)
+        report_prod = prod_engine_with_reg.run_replay(record, spec, feed_auth)
+        assert report_prod is not None
+        assert report_prod.dataset_version == "DS-LIC-AUTH"
+
+        # Fixture Path 1: Engine with allow_fixture_feed=True
+        fixture_engine = PaperReplayEngine(allow_fixture_feed=True)
+        report_fix1 = fixture_engine.run_replay(record, spec, feed_direct)
+        assert report_fix1 is not None
+
+        # Fixture Path 2: prod_engine_no_reg.run_fixture_replay(...)
+        report_fix2 = prod_engine_no_reg.run_fixture_replay(record, spec, feed_direct)
+        assert report_fix2 is not None

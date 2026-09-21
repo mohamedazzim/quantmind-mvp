@@ -62,7 +62,7 @@ class TestPaperExecution:
             }
         )
         feed = ReplayFeed(df, dataset_version="DS-TEST", lot_size=50, tick_size=0.05)
-        engine = PaperReplayEngine()
+        engine = PaperReplayEngine(allow_fixture_feed=True)
 
         report = engine.run_replay(record, spec, feed)
         orders = engine.ledger.get_orders()
@@ -91,7 +91,7 @@ class TestPaperExecution:
             }
         )
         feed = ReplayFeed(df, dataset_version="DS-TEST")
-        engine = PaperReplayEngine()
+        engine = PaperReplayEngine(allow_fixture_feed=True)
 
         # Hold for 3 bars
         report = engine.run_replay(record, spec, feed, hold_bars=3)
@@ -113,7 +113,7 @@ class TestPaperExecution:
         )
         feed = ReplayFeed(df, dataset_version="DS-TEST", tick_size=0.05, lot_size=50)
         # 10 bps slippage
-        engine = PaperReplayEngine(slippage_bps_per_side=10.0)
+        engine = PaperReplayEngine(slippage_bps_per_side=10.0, allow_fixture_feed=True)
 
         report = engine.run_replay(record, spec, feed)
         fills = engine.ledger.get_fills()
@@ -144,7 +144,7 @@ class TestPaperExecution:
                 CostSchedulePeriod(effective_from=date(2023, 1, 1), effective_to=date(2023, 12, 31), round_trip_bps=2.0),
             ),
         )
-        engine = PaperReplayEngine(cost_schedule=cost_sched)
+        engine = PaperReplayEngine(cost_schedule=cost_sched, allow_fixture_feed=True)
         report = engine.run_replay(record, spec, feed)
 
         fills = engine.ledger.get_fills()

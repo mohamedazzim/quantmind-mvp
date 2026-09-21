@@ -243,12 +243,12 @@ def test_replay_strict_determinism(replay_environment) -> None:
 
     # Run 1
     feed1 = ReplayFeed.from_dataset_registry(data_reg, env["dataset_record"].version)
-    engine1 = PaperReplayEngine(cost_schedule=cost_sched, slippage_bps_per_side=1.0)
+    engine1 = PaperReplayEngine(cost_schedule=cost_sched, slippage_bps_per_side=1.0, dataset_registry=data_reg)
     report1 = engine1.run_replay(qual_rec, spec, feed1, initial_capital=100_000.0, hold_bars=2)
 
     # Run 2
     feed2 = ReplayFeed.from_dataset_registry(data_reg, env["dataset_record"].version)
-    engine2 = PaperReplayEngine(cost_schedule=cost_sched, slippage_bps_per_side=1.0)
+    engine2 = PaperReplayEngine(cost_schedule=cost_sched, slippage_bps_per_side=1.0, dataset_registry=data_reg)
     report2 = engine2.run_replay(qual_rec, spec, feed2, initial_capital=100_000.0, hold_bars=2)
 
     # Assert bitwise deterministic match across all metrics and hash
@@ -275,7 +275,7 @@ def test_replay_risk_intervention_recording(replay_environment) -> None:
 
     # Configure risk engine with kill_switch active
     risk_cfg = PaperRiskConfig(kill_switch=True)
-    engine = PaperReplayEngine(ledger=ledger, risk_config=risk_cfg)
+    engine = PaperReplayEngine(ledger=ledger, risk_config=risk_cfg, dataset_registry=data_reg)
 
     report = engine.run_replay(qual_rec, spec, feed)
 
