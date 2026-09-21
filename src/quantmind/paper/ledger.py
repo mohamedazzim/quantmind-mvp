@@ -368,3 +368,47 @@ class PaperLedger:
                 (strategy_id,),
             ).fetchall()
         return self._connection.execute("SELECT * FROM paper_risk_events ORDER BY timestamp ASC").fetchall()
+
+    def get_positions(
+        self,
+        strategy_id: str | None = None,
+        *,
+        from_ts: str | None = None,
+        to_ts: str | None = None,
+    ) -> list[sqlite3.Row]:
+        """Return position snapshot rows ordered by timestamp ASC.
+
+        Temporal window is inclusive on both ends:
+            from_ts <= timestamp <= to_ts
+        """
+        if strategy_id:
+            query = "SELECT * FROM paper_positions WHERE strategy_id = ?"
+            params: list[Any] = [strategy_id]
+        else:
+            query = "SELECT * FROM paper_positions WHERE 1=1"
+            params = []
+        if from_ts is not None:
+            query += " AND timestamp >= ?"
+            params.append(from_ts)
+        if to_ts is not None:
+            query += " AND timestamp <= ?"
+            params.append(to_ts)
+        query += " ORDER BY timestamp ASC"
+        return self._connection.execute(query, params).fetchall()
+
+    def list_reports(
+        self,
+        strategy_id: str | None = None,
+        qualification_id: str | None = None,
+    ) -> list[sqlite3.Row]:
+        """Return paper_reports rows ordered by created_at ASC."""
+        query = "SELECT * FROM paper_reports WHERE 1=1"
+        params: list[Any] = []
+        if strategy_id:
+            query += " AND strategy_id = ?"
+            params.append(strategy_id)
+        if qualification_id:
+            query += " AND qualification_id = ?"
+            params.append(qualification_id)
+        query += " ORDER BY created_at ASC"
+        return self._connection.execute(query, params).fetchall()

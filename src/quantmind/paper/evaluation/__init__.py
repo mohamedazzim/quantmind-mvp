@@ -1,7 +1,8 @@
 """QuantMind Paper Evaluation & Monitoring Subsystem (PRD v4.0).
 
 This package provides window-bounded evaluation, rolling performance and execution
-quality metrics, degradation detection, and immutable evaluation evidence.
+quality metrics, degradation detection, immutable evaluation evidence, and the
+temporal evaluation service (Milestone 5).
 """
 
 from .detector import (
@@ -51,6 +52,12 @@ from .models import (
     PaperEvaluationTransition,
     ResearchFeedbackRecord,
 )
+from .service import (
+    EvaluationResult,
+    InsufficientEvaluationEvidenceError,
+    PaperEvaluationService,
+    PaperEvaluationServiceError,
+)
 
 __all__ = [
     "DegradationDetector",
@@ -58,12 +65,16 @@ __all__ = [
     "EvaluationLedger",
     "EvaluationLedgerError",
     "EvaluationLedgerIntegrityError",
+    "EvaluationResult",
+    "InsufficientEvaluationEvidenceError",
     "MP1_DROPOUT_WINDOW_SESSIONS",
     "MonitoringConfig",
     "MonitoringConfigError",
     "MonitoringProvenanceError",
     "MonitoringSnapshot",
     "PaperEvaluationBaseline",
+    "PaperEvaluationService",
+    "PaperEvaluationServiceError",
     "PaperEvaluationTransition",
     "RULE_DD_EXPANSION_CRITICAL",
     "RULE_RISK_REJECTION_SPIKE",
