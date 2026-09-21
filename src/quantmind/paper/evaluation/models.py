@@ -317,8 +317,8 @@ class MonitoringSnapshot:
 class DegradationEvent:
     """Immutable evidence record created when a monitoring rule threshold is breached.
 
-    Binds the underlying MonitoringSnapshot hash, configured rule threshold,
-    observed metric measurement, and protocol configuration.
+    Binds the underlying MonitoringSnapshot hash, authoritative baseline replay report hash,
+    configured rule threshold, observed metric measurement, and protocol configuration.
     """
 
     strategy_id: str
@@ -332,6 +332,7 @@ class DegradationEvent:
     timestamp: str
     details_json: str
     event_hash: str
+    baseline_replay_report_hash: str
 
     def __post_init__(self) -> None:
         if not self.strategy_id:
@@ -340,6 +341,8 @@ class DegradationEvent:
             raise ValueError("qualification_hash cannot be empty")
         if not self.snapshot_hash:
             raise ValueError("snapshot_hash cannot be empty")
+        if not self.baseline_replay_report_hash:
+            raise ValueError("baseline_replay_report_hash cannot be empty")
         if not self.rule_name:
             raise ValueError("rule_name cannot be empty")
         if not self.monitoring_protocol_version:
@@ -357,6 +360,7 @@ class DegradationEvent:
             self.rule_name,
             self.timestamp,
             self.snapshot_hash,
+            self.baseline_replay_report_hash,
         )
 
     @staticmethod
@@ -365,9 +369,10 @@ class DegradationEvent:
         rule_name: str,
         timestamp: str,
         snapshot_hash: str,
+        baseline_replay_report_hash: str = "",
     ) -> str:
         """Static helper to compute deterministic degradation event ID."""
-        seed = f"{strategy_id}:{rule_name}:{timestamp}:{snapshot_hash}".encode("utf-8")
+        seed = f"{strategy_id}:{rule_name}:{timestamp}:{snapshot_hash}:{baseline_replay_report_hash}".encode("utf-8")
         digest = hashlib.sha256(seed).hexdigest()[:16]
         strat_prefix = strategy_id[:12]
         return f"DEG-{strat_prefix}-{digest}"
@@ -378,6 +383,7 @@ class DegradationEvent:
         Excludes administrative event_id and event_hash.
         """
         return {
+            "baseline_replay_report_hash": str(self.baseline_replay_report_hash),
             "details_json": str(self.details_json),
             "monitoring_config_hash": str(self.monitoring_config_hash),
             "monitoring_protocol_version": str(self.monitoring_protocol_version),
@@ -415,6 +421,7 @@ class DegradationEvent:
         monitoring_protocol_version: str,
         monitoring_config_hash: str,
         timestamp: str,
+        baseline_replay_report_hash: str,
         details_json: str = "{}",
     ) -> DegradationEvent:
         """Factory method to instantiate an immutable DegradationEvent with computed hash."""
@@ -430,6 +437,7 @@ class DegradationEvent:
             timestamp=timestamp,
             details_json=details_json,
             event_hash="",
+            baseline_replay_report_hash=baseline_replay_report_hash,
         )
         digest = temp.compute_hash()
         return cls(
@@ -444,6 +452,7 @@ class DegradationEvent:
             timestamp=timestamp,
             details_json=details_json,
             event_hash=digest,
+            baseline_replay_report_hash=baseline_replay_report_hash,
         )
 
 

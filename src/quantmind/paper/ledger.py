@@ -18,6 +18,7 @@ from quantmind.paper.models import (
     PaperPosition,
     PaperRiskEvent,
     ReplayReport,
+    ReplaySessionSummary,
 )
 
 
@@ -286,6 +287,62 @@ class PaperLedger:
                 report.canonical_json(),
                 report.created_at,
             ),
+        )
+
+    def get_report(self, report_hash: str) -> ReplayReport | None:
+        row = self._connection.execute(
+            "SELECT report_json, created_at FROM paper_reports WHERE report_hash = ?",
+            (report_hash,),
+        ).fetchone()
+        if row is None:
+            return None
+        rep_dict = json.loads(row["report_json"])
+        sessions = tuple(
+            ReplaySessionSummary(
+                session_id=s["session_id"],
+                start_ts=s["start_ts"],
+                end_ts=s["end_ts"],
+                trades=s["trades"],
+                gross_pnl=s["gross_pnl"],
+                net_pnl=s["net_pnl"],
+            )
+            for s in rep_dict.get("session_breakdown", [])
+        )
+        return ReplayReport(
+            strategy_id=rep_dict["strategy_id"],
+            qualification_id=rep_dict["qualification_id"],
+            dataset_version=rep_dict["dataset_version"],
+            trade_count=rep_dict["trade_count"],
+            gross_pnl=rep_dict["gross_pnl"],
+            net_pnl=rep_dict["net_pnl"],
+            costs=rep_dict["costs"],
+            slippage=rep_dict["slippage"],
+            max_drawdown_bps=rep_dict["max_drawdown_bps"],
+            exposure=rep_dict["exposure"],
+            win_rate=rep_dict["win_rate"],
+            expectancy=rep_dict["expectancy"],
+            sharpe_ratio=rep_dict.get("sharpe_ratio"),
+            session_breakdown=sessions,
+            report_hash=report_hash,
+            created_at=row["created_at"],
+            strategy_spec_hash=rep_dict.get("strategy_spec_hash", ""),
+            qualification_hash=rep_dict.get("qualification_hash", ""),
+            dataset_sha256=rep_dict.get("dataset_sha256", ""),
+            research_protocol_version=rep_dict.get("research_protocol_version", ""),
+            symbol=rep_dict.get("symbol", "NIFTY_FUT"),
+            lot_size=rep_dict.get("lot_size", 50),
+            tick_size=rep_dict.get("tick_size", 0.05),
+            slippage_bps_per_side=rep_dict.get("slippage_bps_per_side", 0.0),
+            cost_schedule_id=rep_dict.get("cost_schedule_id", ""),
+            cost_schedule_hash=rep_dict.get("cost_schedule_hash", ""),
+            risk_config_hash=rep_dict.get("risk_config_hash", ""),
+            execution_policy=rep_dict.get("execution_policy", "next_bar_open_v1"),
+            quantity=rep_dict.get("quantity", 1),
+            hold_bars=rep_dict.get("hold_bars", 1),
+            initial_capital=rep_dict.get("initial_capital", 100_000.0),
+            enforce_session_boundaries=rep_dict.get("enforce_session_boundaries", True),
+            split_zone=rep_dict.get("split_zone", "FORWARD_PAPER"),
+            bars_sha256=rep_dict.get("bars_sha256", ""),
         )
 
     def get_orders(self, strategy_id: str | None = None) -> list[sqlite3.Row]:

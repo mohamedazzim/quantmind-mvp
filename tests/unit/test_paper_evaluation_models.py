@@ -66,11 +66,15 @@ def _make_valid_snapshot(created_at: str = "2023-06-01T10:00:00Z") -> Monitoring
     )
 
 
-def _make_valid_degradation_event(timestamp: str = "2023-06-01T15:30:00Z") -> DegradationEvent:
+def _make_valid_degradation_event(
+    timestamp: str = "2023-06-01T15:30:00Z",
+    baseline_replay_report_hash: str = "bhash-1111222233334444",
+) -> DegradationEvent:
     return DegradationEvent.create(
         strategy_id="STRAT-ALPHA-01",
         qualification_hash="qhash-1111222233334444",
         snapshot_hash="shash-1111222233334444",
+        baseline_replay_report_hash=baseline_replay_report_hash,
         rule_name="RULE_DD_EXPANSION_CRITICAL",
         threshold_value=1.50,
         observed_value=1.82,
@@ -334,11 +338,79 @@ class TestDegradationEvent:
             dataclasses.replace(
                 base, snapshot_hash="shash-tampered-9999", event_hash=dataclasses.replace(base, snapshot_hash="shash-tampered-9999").compute_hash()
             ),
+            dataclasses.replace(
+                base, baseline_replay_report_hash="bhash-tampered-0000", event_hash=dataclasses.replace(base, baseline_replay_report_hash="bhash-tampered-0000").compute_hash()
+            ),
         ]
 
         for mut in mutations:
             assert mut.event_hash != base_hash
             assert mut.verify_digest() is True
+
+    def test_event_provenance_baseline_and_observed_hashes(self) -> None:
+        """PRD v4.0 M4.3 Event Provenance Test:
+
+        - changing baseline hash changes event_hash
+        - changing observed snapshot changes event_hash
+        - changing both changes event_hash
+        - same baseline + same snapshot -> identical event_hash
+        """
+        e_base = _make_valid_degradation_event(
+            baseline_replay_report_hash="bhash-AAA",
+        )
+        # Changing baseline hash changes event_hash
+        e_diff_base = _make_valid_degradation_event(
+            baseline_replay_report_hash="bhash-BBB",
+        )
+        assert e_base.event_hash != e_diff_base.event_hash
+
+        # Changing observed snapshot changes event_hash
+        e_diff_snap = DegradationEvent.create(
+            strategy_id=e_base.strategy_id,
+            qualification_hash=e_base.qualification_hash,
+            snapshot_hash="shash-DIFFERENT-SNAPSHOT",
+            baseline_replay_report_hash=e_base.baseline_replay_report_hash,
+            rule_name=e_base.rule_name,
+            threshold_value=e_base.threshold_value,
+            observed_value=e_base.observed_value,
+            monitoring_protocol_version=e_base.monitoring_protocol_version,
+            monitoring_config_hash=e_base.monitoring_config_hash,
+            timestamp=e_base.timestamp,
+            details_json=e_base.details_json,
+        )
+        assert e_base.event_hash != e_diff_snap.event_hash
+
+        # Changing both changes event_hash
+        e_diff_both = DegradationEvent.create(
+            strategy_id=e_base.strategy_id,
+            qualification_hash=e_base.qualification_hash,
+            snapshot_hash="shash-DIFFERENT-SNAPSHOT",
+            baseline_replay_report_hash="bhash-BBB",
+            rule_name=e_base.rule_name,
+            threshold_value=e_base.threshold_value,
+            observed_value=e_base.observed_value,
+            monitoring_protocol_version=e_base.monitoring_protocol_version,
+            monitoring_config_hash=e_base.monitoring_config_hash,
+            timestamp=e_base.timestamp,
+            details_json=e_base.details_json,
+        )
+        assert e_base.event_hash != e_diff_both.event_hash
+
+        # Same baseline + same snapshot -> identical event_hash
+        e_identical = _make_valid_degradation_event(
+            baseline_replay_report_hash="bhash-AAA",
+        )
+        assert e_base.event_hash == e_identical.event_hash
+
+        # Verify degradation event canonical dict includes all identifying dimensions
+        canonical = e_base.canonical_dict()
+        assert "strategy_id" in canonical
+        assert "qualification_hash" in canonical
+        assert "baseline_replay_report_hash" in canonical
+        assert "snapshot_hash" in canonical
+        assert "monitoring_config_hash" in canonical
+        assert "monitoring_protocol_version" in canonical
+        assert "rule_name" in canonical
 
     def test_derived_event_id_is_deterministic(self) -> None:
         e1 = _make_valid_degradation_event()

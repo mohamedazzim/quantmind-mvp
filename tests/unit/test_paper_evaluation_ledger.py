@@ -26,8 +26,11 @@ from quantmind.paper.evaluation.models import (
     DegradationEvent,
     MonitoringConfig,
     MonitoringSnapshot,
+    PaperEvaluationBaseline,
     PaperEvaluationTransition,
 )
+from quantmind.paper.ledger import PaperLedger
+from quantmind.paper.models import ReplayReport, ReplaySessionSummary
 
 
 # ---------------------------------------------------------------------------
@@ -70,11 +73,13 @@ def _make_degradation_event(
     strategy_id: str = "STRAT-ALPHA-01",
     timestamp: str = "2023-02-01T15:30:00Z",
     rule_name: str = "RULE_DD_EXPANSION_CRITICAL",
+    baseline_replay_report_hash: str = "bhash-alpha-9999",
 ) -> DegradationEvent:
     return DegradationEvent.create(
         strategy_id=strategy_id,
         qualification_hash="qhash-alpha-1111",
         snapshot_hash=snapshot_hash,
+        baseline_replay_report_hash=baseline_replay_report_hash,
         rule_name=rule_name,
         threshold_value=1.5,
         observed_value=1.82,
@@ -83,6 +88,60 @@ def _make_degradation_event(
         timestamp=timestamp,
         details_json='{"realized_dd_bps":1450.0}',
     )
+
+
+def _make_replay_report(
+    strategy_id: str = "STRAT-ALPHA-01",
+    qualification_id: str = "QUAL-001",
+    qualification_hash: str = "qhash-alpha-1111",
+    dataset_version: str = "DS-NIFTY-2026",
+    dataset_sha256: str = "dsha-alpha-1234",
+    split_zone: str = "FORWARD_PAPER",
+    max_drawdown_bps: float = 500.0,
+    slippage_bps_per_side: float = 4.0,
+    execution_policy: str = "next_bar_open_v1",
+    cost_schedule_hash: str = "csched-1111",
+    risk_config_hash: str = "risk-1111",
+    created_at: str = "2026-03-01T15:30:00Z",
+) -> ReplayReport:
+    sessions = (
+        ReplaySessionSummary(
+            session_id="SESS-001",
+            start_ts="2026-03-01T09:15:00Z",
+            end_ts="2026-03-01T15:30:00Z",
+            trades=5,
+            gross_pnl=2500.0,
+            net_pnl=2200.0,
+        ),
+    )
+    return ReplayReport.create(
+        strategy_id=strategy_id,
+        qualification_id=qualification_id,
+        dataset_version=dataset_version,
+        trade_count=50,
+        gross_pnl=15000.0,
+        net_pnl=12000.0,
+        costs=1800.0,
+        slippage=1200.0,
+        max_drawdown_bps=max_drawdown_bps,
+        exposure=50000.0,
+        win_rate=0.55,
+        expectancy=240.0,
+        sharpe_ratio=1.85,
+        session_breakdown=sessions,
+        created_at=created_at,
+        qualification_hash=qualification_hash,
+        dataset_sha256=dataset_sha256,
+        split_zone=split_zone,
+        slippage_bps_per_side=slippage_bps_per_side,
+        execution_policy=execution_policy,
+        cost_schedule_hash=cost_schedule_hash,
+        risk_config_hash=risk_config_hash,
+    )
+
+
+def _make_baseline_from_report(report: ReplayReport) -> PaperEvaluationBaseline:
+    return PaperEvaluationBaseline.from_replay_report(report)
 
 
 def _make_transition(
@@ -108,7 +167,7 @@ def _make_transition(
 
 
 class TestEvaluationLedgerSchema:
-    def test_all_three_tables_and_columns_created(self) -> None:
+    def test_all_four_tables_and_columns_created(self) -> None:
         ledger = EvaluationLedger()
         conn = ledger._connection
 
@@ -121,6 +180,7 @@ class TestEvaluationLedgerSchema:
             "monitoring_snapshots",
             "degradation_events",
             "paper_evaluation_transitions",
+            "evaluation_baselines",
         }
 
         # Check columns of monitoring_snapshots
@@ -139,6 +199,7 @@ class TestEvaluationLedgerSchema:
         assert "event_id" in deg_cols
         assert "event_hash" in deg_cols
         assert "snapshot_hash" in deg_cols
+        assert "baseline_replay_report_hash" in deg_cols
 
         # Check columns of paper_evaluation_transitions
         trans_cols = {
@@ -147,6 +208,18 @@ class TestEvaluationLedgerSchema:
         assert "transition_id" in trans_cols
         assert "transition_hash" in trans_cols
         assert "evidence_hash" in trans_cols
+
+        # Check columns of evaluation_baselines
+        base_cols = {
+            c["name"] for c in conn.execute("PRAGMA table_info(evaluation_baselines)").fetchall()
+        }
+        assert "binding_hash" in base_cols
+        assert "baseline_replay_report_hash" in base_cols
+        assert "strategy_id" in base_cols
+        assert "qualification_hash" in base_cols
+        assert "baseline_execution_policy" in base_cols
+        assert "baseline_cost_schedule_hash" in base_cols
+        assert "baseline_risk_config_hash" in base_cols
 
 
 # ---------------------------------------------------------------------------
@@ -460,4 +533,314 @@ class TestPersistenceAcrossReopen:
         retrieved_trans = ledger2.get_transition(trans.transition_hash)
         assert retrieved_trans is not None
         assert retrieved_trans.transition_hash == trans.transition_hash
+        ledger2.close()
+
+
+# ---------------------------------------------------------------------------
+# 8. Authoritative Evaluation Baseline Ledger Tests (M4.3)
+# ---------------------------------------------------------------------------
+
+
+class TestEvaluationBaselineLedger:
+    """Tests for authoritative PaperEvaluationBaseline persistence, uniqueness, and verification."""
+
+    def test_two_baseline_attack_rejected(self) -> None:
+        """Adversarial test: attempt to register baseline B for an already bound strategy + qualification."""
+        ledger = EvaluationLedger()
+
+        rep_a = _make_replay_report(max_drawdown_bps=500.0, slippage_bps_per_side=4.0)
+        base_a = _make_baseline_from_report(rep_a)
+
+        # Baseline A registered successfully
+        reg_a = ledger.register_baseline(base_a, replay_report=rep_a)
+        assert reg_a.binding_hash == base_a.binding_hash
+
+        # Baseline B has different parameters (e.g. max_drawdown_bps) -> different report hash
+        rep_b = _make_replay_report(max_drawdown_bps=350.0, slippage_bps_per_side=2.0)
+        base_b = _make_baseline_from_report(rep_b)
+
+        # Attempting to register baseline B for the SAME strategy + qualification MUST fail closed
+        with pytest.raises(
+            EvaluationLedgerIntegrityError,
+            match="already has an authoritative baseline registered",
+        ):
+            ledger.register_baseline(base_b, replay_report=rep_b)
+
+        # Verify baseline A remains the sole authoritative baseline
+        canonical = ledger.get_baseline(base_a.strategy_id, base_a.qualification_hash)
+        assert canonical is not None
+        assert canonical.binding_hash == base_a.binding_hash
+        assert canonical.baseline_replay_report_hash == rep_a.report_hash
+
+    def test_identical_re_registration_returns_existing_baseline(self) -> None:
+        """Idempotency test: registering the exact same baseline multiple times succeeds and returns existing."""
+        ledger = EvaluationLedger()
+        rep = _make_replay_report()
+        base = _make_baseline_from_report(rep)
+
+        reg1 = ledger.register_baseline(base, replay_report=rep)
+        reg2 = ledger.register_baseline(base, replay_report=rep)
+
+        assert reg1.binding_hash == reg2.binding_hash
+        assert reg1 == reg2
+
+    def test_missing_replay_report_rejected(self) -> None:
+        """Cannot register an unverified metadata-only baseline without authoritative replay report."""
+        ledger = EvaluationLedger()
+        rep = _make_replay_report()
+        base = _make_baseline_from_report(rep)
+
+        with pytest.raises(
+            EvaluationLedgerIntegrityError,
+            match="Authoritative ReplayReport is required",
+        ):
+            ledger.register_baseline(base)
+
+    def test_tampered_replay_report_rejected(self) -> None:
+        """Replay report with tampered payload fails digest verification and is rejected."""
+        ledger = EvaluationLedger()
+        rep = _make_replay_report()
+        base = _make_baseline_from_report(rep)
+
+        tampered_rep = ReplayReport(
+            **{k: v for k, v in rep.__dict__.items() if k != "gross_pnl"},
+            gross_pnl=999999.0,
+        )
+
+        with pytest.raises(
+            EvaluationLedgerIntegrityError,
+            match="Bound ReplayReport failed digest verification",
+        ):
+            ledger.register_baseline(base, replay_report=tampered_rep)
+
+    def test_mismatched_replay_report_hash_rejected(self) -> None:
+        ledger = EvaluationLedger()
+        rep1 = _make_replay_report(max_drawdown_bps=500.0)
+        rep2 = _make_replay_report(max_drawdown_bps=600.0)
+        base1 = _make_baseline_from_report(rep1)
+
+        with pytest.raises(
+            EvaluationLedgerIntegrityError,
+            match="ReplayReport hash mismatch",
+        ):
+            ledger.register_baseline(base1, replay_report=rep2)
+
+    def test_mismatched_strategy_id_rejected(self) -> None:
+        ledger = EvaluationLedger()
+        rep = _make_replay_report(strategy_id="STRAT-ALPHA-01")
+        base_wrong_strat = PaperEvaluationBaseline.create(
+            strategy_id="STRAT-OTHER",
+            qualification_hash=rep.qualification_hash,
+            baseline_replay_report_hash=rep.report_hash,
+            baseline_dataset_version=rep.dataset_version,
+            baseline_dataset_sha256=rep.dataset_sha256,
+            baseline_execution_policy=rep.execution_policy,
+            baseline_cost_schedule_hash=rep.cost_schedule_hash,
+            baseline_risk_config_hash=rep.risk_config_hash,
+        )
+        with pytest.raises(
+            EvaluationLedgerIntegrityError,
+            match="ReplayReport strategy_id mismatch",
+        ):
+            ledger.register_baseline(base_wrong_strat, replay_report=rep)
+
+    def test_mismatched_qualification_hash_rejected(self) -> None:
+        ledger = EvaluationLedger()
+        rep = _make_replay_report(qualification_hash="qhash-CORRECT")
+        base_wrong_qual = PaperEvaluationBaseline.create(
+            strategy_id=rep.strategy_id,
+            qualification_hash="qhash-WRONG",
+            baseline_replay_report_hash=rep.report_hash,
+            baseline_dataset_version=rep.dataset_version,
+            baseline_dataset_sha256=rep.dataset_sha256,
+            baseline_execution_policy=rep.execution_policy,
+            baseline_cost_schedule_hash=rep.cost_schedule_hash,
+            baseline_risk_config_hash=rep.risk_config_hash,
+        )
+        with pytest.raises(
+            EvaluationLedgerIntegrityError,
+            match="ReplayReport qualification_hash mismatch",
+        ):
+            ledger.register_baseline(base_wrong_qual, replay_report=rep)
+
+    def test_mismatched_dataset_version_rejected(self) -> None:
+        ledger = EvaluationLedger()
+        rep = _make_replay_report(dataset_version="DS-V1")
+        base_wrong_ds = PaperEvaluationBaseline.create(
+            strategy_id=rep.strategy_id,
+            qualification_hash=rep.qualification_hash,
+            baseline_replay_report_hash=rep.report_hash,
+            baseline_dataset_version="DS-V2",
+            baseline_dataset_sha256=rep.dataset_sha256,
+            baseline_execution_policy=rep.execution_policy,
+            baseline_cost_schedule_hash=rep.cost_schedule_hash,
+            baseline_risk_config_hash=rep.risk_config_hash,
+        )
+        with pytest.raises(
+            EvaluationLedgerIntegrityError,
+            match="ReplayReport dataset_version mismatch",
+        ):
+            ledger.register_baseline(base_wrong_ds, replay_report=rep)
+
+    def test_mismatched_execution_policy_rejected(self) -> None:
+        ledger = EvaluationLedger()
+        rep = _make_replay_report(execution_policy="next_bar_open_v1")
+        base_wrong_pol = PaperEvaluationBaseline.create(
+            strategy_id=rep.strategy_id,
+            qualification_hash=rep.qualification_hash,
+            baseline_replay_report_hash=rep.report_hash,
+            baseline_dataset_version=rep.dataset_version,
+            baseline_dataset_sha256=rep.dataset_sha256,
+            baseline_execution_policy="limit_cross_v2",
+            baseline_cost_schedule_hash=rep.cost_schedule_hash,
+            baseline_risk_config_hash=rep.risk_config_hash,
+        )
+        with pytest.raises(
+            EvaluationLedgerIntegrityError,
+            match="ReplayReport execution_policy mismatch",
+        ):
+            ledger.register_baseline(base_wrong_pol, replay_report=rep)
+
+    def test_mismatched_cost_schedule_rejected(self) -> None:
+        ledger = EvaluationLedger()
+        rep = _make_replay_report(cost_schedule_hash="csched-1111")
+        base_wrong_cost = PaperEvaluationBaseline.create(
+            strategy_id=rep.strategy_id,
+            qualification_hash=rep.qualification_hash,
+            baseline_replay_report_hash=rep.report_hash,
+            baseline_dataset_version=rep.dataset_version,
+            baseline_dataset_sha256=rep.dataset_sha256,
+            baseline_execution_policy=rep.execution_policy,
+            baseline_cost_schedule_hash="csched-DIFFERENT",
+            baseline_risk_config_hash=rep.risk_config_hash,
+        )
+        with pytest.raises(
+            EvaluationLedgerIntegrityError,
+            match="ReplayReport cost_schedule_hash mismatch",
+        ):
+            ledger.register_baseline(base_wrong_cost, replay_report=rep)
+
+    def test_mismatched_risk_config_rejected(self) -> None:
+        ledger = EvaluationLedger()
+        rep = _make_replay_report(risk_config_hash="risk-1111")
+        base_wrong_risk = PaperEvaluationBaseline.create(
+            strategy_id=rep.strategy_id,
+            qualification_hash=rep.qualification_hash,
+            baseline_replay_report_hash=rep.report_hash,
+            baseline_dataset_version=rep.dataset_version,
+            baseline_dataset_sha256=rep.dataset_sha256,
+            baseline_execution_policy=rep.execution_policy,
+            baseline_cost_schedule_hash=rep.cost_schedule_hash,
+            baseline_risk_config_hash="risk-DIFFERENT",
+        )
+        with pytest.raises(
+            EvaluationLedgerIntegrityError,
+            match="ReplayReport risk_config_hash mismatch",
+        ):
+            ledger.register_baseline(base_wrong_risk, replay_report=rep)
+
+    def test_tampered_baseline_binding_hash_rejected(self) -> None:
+        ledger = EvaluationLedger()
+        rep = _make_replay_report()
+        base = _make_baseline_from_report(rep)
+
+        tampered_base = PaperEvaluationBaseline(
+            **{k: v for k, v in base.__dict__.items() if k != "binding_hash"},
+            binding_hash="tampered_binding_hash_xyz",
+        )
+        with pytest.raises(
+            EvaluationLedgerIntegrityError,
+            match="PaperEvaluationBaseline failed digest verification",
+        ):
+            ledger.register_baseline(tampered_base, replay_report=rep)
+
+    def test_duck_typed_baseline_rejected(self) -> None:
+        ledger = EvaluationLedger()
+
+        class DuckBaseline:
+            strategy_id = "STRAT-01"
+            qualification_hash = "qhash-01"
+
+        with pytest.raises(TypeError, match="Expected PaperEvaluationBaseline"):
+            ledger.register_baseline(DuckBaseline())  # type: ignore
+
+    def test_get_baseline_returns_canonical_or_none(self) -> None:
+        ledger = EvaluationLedger()
+        rep = _make_replay_report()
+        base = _make_baseline_from_report(rep)
+
+        # Before registration
+        assert ledger.get_baseline(base.strategy_id, base.qualification_hash) is None
+
+        # After registration
+        ledger.register_baseline(base, replay_report=rep)
+        canonical = ledger.get_baseline(base.strategy_id, base.qualification_hash)
+        assert canonical is not None
+        assert canonical.binding_hash == base.binding_hash
+        assert canonical.baseline_replay_report_hash == base.baseline_replay_report_hash
+
+    def test_get_baseline_by_hash(self) -> None:
+        ledger = EvaluationLedger()
+        rep = _make_replay_report()
+        base = _make_baseline_from_report(rep)
+
+        assert ledger.get_baseline_by_hash(base.binding_hash) is None
+
+        ledger.register_baseline(base, replay_report=rep)
+        found = ledger.get_baseline_by_hash(base.binding_hash)
+        assert found is not None
+        assert found.binding_hash == base.binding_hash
+
+    def test_registration_via_paper_ledger(self) -> None:
+        """PaperLedger integration: report is recorded in PaperLedger and verified during baseline registration."""
+        paper_ledger = PaperLedger()
+        eval_ledger = EvaluationLedger()
+
+        rep = _make_replay_report()
+        paper_ledger.record_report(rep)
+
+        base = _make_baseline_from_report(rep)
+
+        # Register passing paper_ledger instead of replay_report directly
+        reg = eval_ledger.register_baseline(base, paper_ledger=paper_ledger)
+        assert reg.binding_hash == base.binding_hash
+
+    def test_evaluation_baselines_immutability_triggers(self) -> None:
+        """Direct SQL UPDATE and DELETE on evaluation_baselines must be blocked by SQLite triggers."""
+        ledger = EvaluationLedger()
+        rep = _make_replay_report()
+        base = _make_baseline_from_report(rep)
+        ledger.register_baseline(base, replay_report=rep)
+
+        # Direct SQL UPDATE must fail
+        with pytest.raises(sqlite3.DatabaseError, match="evaluation baselines are immutable and cannot be updated"):
+            ledger._connection.execute(
+                "UPDATE evaluation_baselines SET baseline_replay_report_hash = 'tampered' WHERE binding_hash = ?",
+                (base.binding_hash,),
+            )
+
+        # Direct SQL DELETE must fail
+        with pytest.raises(sqlite3.DatabaseError, match="evaluation baselines are permanent and cannot be deleted"):
+            ledger._connection.execute(
+                "DELETE FROM evaluation_baselines WHERE binding_hash = ?",
+                (base.binding_hash,),
+            )
+
+    def test_baseline_persists_across_ledger_close_and_reopen(self, tmp_path) -> None:
+        db_file = tmp_path / "evaluation_with_baseline.db"
+
+        # Session 1: Register baseline
+        ledger1 = EvaluationLedger(db_file)
+        rep = _make_replay_report()
+        base = _make_baseline_from_report(rep)
+        ledger1.register_baseline(base, replay_report=rep)
+        ledger1.close()
+
+        # Session 2: Reopen and verify
+        ledger2 = EvaluationLedger(db_file)
+        retrieved = ledger2.get_baseline(base.strategy_id, base.qualification_hash)
+        assert retrieved is not None
+        assert retrieved.binding_hash == base.binding_hash
+        assert retrieved.baseline_replay_report_hash == rep.report_hash
+        assert retrieved.canonical_dict() == base.canonical_dict()
         ledger2.close()

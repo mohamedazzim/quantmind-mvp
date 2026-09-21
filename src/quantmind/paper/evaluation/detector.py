@@ -95,6 +95,7 @@ class DegradationDetector:
         *,
         baseline: PaperEvaluationBaseline | None = None,
         observed_replay_report: ReplayReport | None = None,
+        baseline_replay_report_hash: str | None = None,
         baseline_max_dd_bps: float | None = None,
         configured_slippage_bps: float | None = None,
         consecutive_inactive_sessions: int | None = None,
@@ -111,6 +112,7 @@ class DegradationDetector:
             baseline_replay_report=baseline_replay_report,
             baseline=effective_baseline,
             observed_replay_report=observed_replay_report,
+            baseline_replay_report_hash=baseline_replay_report_hash,
             baseline_max_dd_bps=baseline_max_dd_bps,
             configured_slippage_bps=configured_slippage_bps,
             consecutive_inactive_sessions=consecutive_inactive_sessions,
@@ -128,6 +130,7 @@ def detect_degradations(
     *,
     baseline: PaperEvaluationBaseline | None = None,
     observed_replay_report: ReplayReport | None = None,
+    baseline_replay_report_hash: str | None = None,
     baseline_max_dd_bps: float | None = None,
     configured_slippage_bps: float | None = None,
     consecutive_inactive_sessions: int | None = None,
@@ -144,6 +147,7 @@ def detect_degradations(
         baseline_replay_report: Optional authoritative ReplayReport for baseline replay evidence.
         baseline: Optional explicit PaperEvaluationBaseline binding.
         observed_replay_report: Optional authoritative ReplayReport for observed forward evaluation window.
+        baseline_replay_report_hash: Optional explicit baseline replay report hash.
         baseline_max_dd_bps: Explicit baseline max drawdown in bps (must match replay report if both supplied).
         configured_slippage_bps: Explicit modeled slippage in bps (must match replay report if both supplied).
         consecutive_inactive_sessions: Explicit count of consecutive sessions with 0 trades.
@@ -200,6 +204,16 @@ def detect_degradations(
         aux_metrics=aux_metrics,
     )
 
+    # Resolve authoritative baseline replay report hash
+    if baseline is not None:
+        effective_baseline_hash = baseline.baseline_replay_report_hash
+    elif baseline_replay_report is not None:
+        effective_baseline_hash = baseline_replay_report.report_hash
+    elif baseline_replay_report_hash is not None:
+        effective_baseline_hash = baseline_replay_report_hash
+    else:
+        effective_baseline_hash = snapshot.replay_report_hash
+
     # -----------------------------------------------------------------------
     # 3. Rule Evaluations
     # -----------------------------------------------------------------------
@@ -224,6 +238,7 @@ def detect_degradations(
                 strategy_id=snapshot.strategy_id,
                 qualification_hash=snapshot.qualification_hash,
                 snapshot_hash=snapshot.snapshot_hash,
+                baseline_replay_report_hash=effective_baseline_hash,
                 rule_name=RULE_DD_EXPANSION_CRITICAL,
                 threshold_value=threshold_dd,
                 observed_value=observed_dd,
@@ -253,6 +268,7 @@ def detect_degradations(
                     strategy_id=snapshot.strategy_id,
                     qualification_hash=snapshot.qualification_hash,
                     snapshot_hash=snapshot.snapshot_hash,
+                    baseline_replay_report_hash=effective_baseline_hash,
                     rule_name=RULE_SHARPE_COLLAPSE,
                     threshold_value=threshold_sharpe,
                     observed_value=observed_sharpe,
@@ -282,6 +298,7 @@ def detect_degradations(
                 strategy_id=snapshot.strategy_id,
                 qualification_hash=snapshot.qualification_hash,
                 snapshot_hash=snapshot.snapshot_hash,
+                baseline_replay_report_hash=effective_baseline_hash,
                 rule_name=RULE_SLIPPAGE_ANOMALY,
                 threshold_value=threshold_slip,
                 observed_value=observed_slip,
@@ -312,6 +329,7 @@ def detect_degradations(
                     strategy_id=snapshot.strategy_id,
                     qualification_hash=snapshot.qualification_hash,
                     snapshot_hash=snapshot.snapshot_hash,
+                    baseline_replay_report_hash=effective_baseline_hash,
                     rule_name=RULE_RISK_REJECTION_SPIKE,
                     threshold_value=threshold_rate,
                     observed_value=observed_rate,
@@ -339,6 +357,7 @@ def detect_degradations(
                 strategy_id=snapshot.strategy_id,
                 qualification_hash=snapshot.qualification_hash,
                 snapshot_hash=snapshot.snapshot_hash,
+                baseline_replay_report_hash=effective_baseline_hash,
                 rule_name=RULE_TRADE_DROPOUT,
                 threshold_value=threshold_dropout,
                 observed_value=observed_dropout,
