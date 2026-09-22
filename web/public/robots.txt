@@ -1,0 +1,3 @@
+# QuantMind Web Public Assets
+User-agent: *
+Disallow: /

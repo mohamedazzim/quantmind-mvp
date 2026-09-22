@@ -42,7 +42,7 @@ async def list_feedback_records(
                 "empirical_notes": r["empirical_notes"],
                 "created_at": r["created_at"],
                 "feedback_hash": r["feedback_hash"],
-                "task_id": derive_feedback_task_id(r["feedback_hash"]),
+                "task_id": derive_feedback_task_id(r["feedback_hash"], "RP-1.0"),
             }
             for r in rows
         ]

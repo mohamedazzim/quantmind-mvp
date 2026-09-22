@@ -47,12 +47,14 @@ services:
       dockerfile: Dockerfile.web
       args:
         - NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
+        - INTERNAL_API_URL=http://api:8000
     container_name: quantmind-web
     restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
       - NODE_ENV=production
+      - INTERNAL_API_URL=http://api:8000
     depends_on:
       - api
 

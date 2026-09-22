@@ -46,7 +46,7 @@ export default function LoginPage() {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">
+            <label htmlFor="username" className="block text-xs font-semibold uppercase tracking-wider text-slate-400">
               Username
             </label>
             <div className="relative mt-1">
@@ -54,6 +54,8 @@ export default function LoginPage() {
                 <UserIcon className="h-4 w-4" />
               </div>
               <input
+                id="username"
+                name="username"
                 type="text"
                 required
                 value={username}
@@ -65,7 +67,7 @@ export default function LoginPage() {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">
+            <label htmlFor="password" className="block text-xs font-semibold uppercase tracking-wider text-slate-400">
               Password
             </label>
             <div className="relative mt-1">
@@ -73,6 +75,8 @@ export default function LoginPage() {
                 <Lock className="h-4 w-4" />
               </div>
               <input
+                id="password"
+                name="password"
                 type="password"
                 required
                 value={password}

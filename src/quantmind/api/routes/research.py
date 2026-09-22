@@ -60,13 +60,13 @@ async def list_research_tasks(
             tasks.append(
                 ResearchTaskItem(
                     task_id=task.task_id,
-                    source_feedback_hash=task.source_feedback_hash,
+                    source_feedback_hash=task.feedback_hash,
                     strategy_id=task.strategy_id,
                     failure_mode=task.failure_mode,
                     drawdown_expansion_ratio=task.drawdown_expansion_ratio,
                     realized_slippage_bps=task.realized_slippage_bps,
                     realized_sharpe=task.realized_sharpe,
-                    suggested_hypothesis=task.suggested_hypothesis,
+                    suggested_hypothesis=f"Mitigate {task.failure_mode} degradation on {task.strategy_id}",
                     empirical_notes=task.empirical_notes,
                     created_at=task.created_at,
                 )

@@ -103,6 +103,12 @@ class AppContext:
         conn.row_factory = sqlite3.Row
         return conn
 
+    def get_app_connection(self) -> sqlite3.Connection:
+        """Helper to get a query connection to application metadata database."""
+        conn = sqlite3.connect(str(self.settings.app_db_path))
+        conn.row_factory = sqlite3.Row
+        return conn
+
 
 _global_context: AppContext | None = None
 

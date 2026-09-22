@@ -243,22 +243,30 @@ def seed_demo_data(force: bool = False) -> None:
     except Exception as exc:
         print(f"[*] PAPER_ACTIVE transition notice: {exc}")
 
-    # 8. Seed Monitoring Snapshots and Degradation Events
+    # 8. Seed Monitoring Snapshots, Degradation Events, Transitions & Feedback
+    snapshot_id = f"SNAP-{strat_id[6:14]}-001"
     snapshot_hash = hashlib.sha256(f"snap:{strat_id}:{now_iso}".encode("utf-8")).hexdigest()
     with ctx.get_core_connection() as conn:
         conn.execute(
             """
             INSERT OR IGNORE INTO monitoring_snapshots (
-                strategy_id, snapshot_hash, monitoring_protocol_version,
-                monitoring_config_hash, window_start_ts, window_end_ts,
-                total_trades, net_pnl, max_drawdown_bps, realized_sharpe,
-                realized_slippage_bps, cost_to_turnover_bps, risk_event_count,
-                metrics_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                snapshot_id, strategy_id, qualification_hash, replay_report_hash,
+                dataset_version, dataset_sha256, split_zone,
+                monitoring_protocol_version, monitoring_config_hash,
+                window_start_ts, window_end_ts, total_trades, net_pnl,
+                max_drawdown_bps, realized_sharpe, realized_slippage_bps,
+                cost_to_turnover_bps, risk_event_count, metrics_json,
+                created_at, snapshot_hash, regime_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                snapshot_id,
                 strat_id,
-                snapshot_hash,
+                qual_hash,
+                report_hash,
+                dataset_version,
+                dataset_record.sha256,
+                "FORWARD_PAPER",
                 "proto-v1",
                 "cfg-hash-1",
                 "2026-01-03 09:15:00",
@@ -272,6 +280,8 @@ def seed_demo_data(force: bool = False) -> None:
                 0,
                 json.dumps({"win_rate": 0.64, "profit_factor": 1.82}),
                 now_iso,
+                snapshot_hash,
+                None,
             ),
         )
 
@@ -299,6 +309,72 @@ def seed_demo_data(force: bool = False) -> None:
                 now_iso,
                 json.dumps({"message": "Approaching warning threshold"}),
                 event_hash,
+            ),
+        )
+
+        # Transition record
+        trans_hash = hashlib.sha256(f"trans:{strat_id}:{now_iso}".encode("utf-8")).hexdigest()
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO paper_evaluation_transitions (
+                transition_id, strategy_id, old_state, new_state, initiator,
+                evidence_type, evidence_hash, reason, timestamp, transition_hash,
+                qualification_hash, snapshot_hash, regime_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                f"TRN-{strat_id[6:14]}-001",
+                strat_id,
+                "PAPER_ELIGIBLE",
+                "PAPER_ACTIVE",
+                "GOVERNANCE_SYSTEM",
+                "BASELINE_BINDING",
+                binding_hash,
+                "Approved with established baseline",
+                now_iso,
+                trans_hash,
+                qual_hash,
+                None,
+                None,
+            ),
+        )
+
+        # Research Feedback Record (Domain Model Factory)
+        from quantmind.paper.evaluation.models import ResearchFeedbackRecord
+        fb_rec = ResearchFeedbackRecord.create(
+            strategy_id=strat_id,
+            qualification_hash=qual_hash,
+            degradation_event_hash=event_hash,
+            dataset_version=dataset_version,
+            failure_mode="DRAWDOWN_LIMIT",
+            realized_sharpe=2.08,
+            drawdown_expansion_ratio=1.42,
+            realized_slippage_bps=1.2,
+            empirical_notes="Approaching warning threshold in session 2",
+            created_at=now_iso,
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO research_feedback (
+                feedback_id, strategy_id, qualification_hash, degradation_event_hash,
+                dataset_version, failure_mode, realized_sharpe,
+                drawdown_expansion_ratio, realized_slippage_bps,
+                empirical_notes, created_at, feedback_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                fb_rec.derived_feedback_id,
+                fb_rec.strategy_id,
+                fb_rec.qualification_hash,
+                fb_rec.degradation_event_hash,
+                fb_rec.dataset_version,
+                fb_rec.failure_mode,
+                fb_rec.realized_sharpe,
+                fb_rec.drawdown_expansion_ratio,
+                fb_rec.realized_slippage_bps,
+                fb_rec.empirical_notes,
+                fb_rec.created_at,
+                fb_rec.feedback_hash,
             ),
         )
 

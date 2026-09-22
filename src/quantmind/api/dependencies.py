@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 from typing import Callable
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 
 from quantmind.app.auth.models import User, UserRole
 from quantmind.app.context import AppContext, get_app_context
 
 
-def get_ctx() -> AppContext:
-    """Provide the global AppContext."""
+def get_ctx(request: Request) -> AppContext:
+    """Provide the application AppContext."""
+    if hasattr(request.app.state, "ctx") and request.app.state.ctx is not None:
+        return request.app.state.ctx
     return get_app_context()
 
 

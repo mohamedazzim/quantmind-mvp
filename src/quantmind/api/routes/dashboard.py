@@ -14,6 +14,7 @@ router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 
 @router.get("", response_model=dict[str, Any])
+@router.get("/kpis", response_model=dict[str, Any])
 async def get_dashboard(
     user: User = Depends(get_current_user),
     ctx: AppContext = Depends(get_ctx),

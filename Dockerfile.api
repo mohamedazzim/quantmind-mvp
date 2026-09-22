@@ -9,15 +9,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy python project specs and install dependencies
+# Copy python project specs and source code
 COPY pyproject.toml /app/
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -e .
-
-# Copy source code and scripts
 COPY src /app/src
 COPY configs /app/configs
 COPY scripts /app/scripts
+
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -e .
 
 # Default directory for persistent authoritative ledgers
 ENV QUANTMIND_DATA_DIR=/app/data

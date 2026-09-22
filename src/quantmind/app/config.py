@@ -51,6 +51,7 @@ class AppSettings(BaseSettings):
     model_config = {
         "env_file": ".env",
         "extra": "ignore",
+        "populate_by_name": True,
     }
 
 

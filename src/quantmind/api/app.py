@@ -26,8 +26,8 @@ from quantmind.api.routes import (
     strategies,
     trials,
 )
-from quantmind.app.config import get_settings
-from quantmind.app.context import get_app_context
+from quantmind.app.config import AppSettings, get_settings
+from quantmind.app.context import AppContext, get_app_context
 
 
 @asynccontextmanager
@@ -40,9 +40,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
 
-def create_app() -> FastAPI:
+def create_app(settings: AppSettings | None = None) -> FastAPI:
     """Build and configure the main FastAPI application."""
-    settings = get_settings()
+    if settings is not None:
+        ctx = AppContext(settings)
+        app_settings = settings
+    else:
+        ctx = get_app_context()
+        app_settings = ctx.settings
 
     app = FastAPI(
         title="QuantMind Quantitative Platform API",
@@ -50,11 +55,13 @@ def create_app() -> FastAPI:
         version="4.0.0",
         lifespan=lifespan,
     )
+    app.state.settings = app_settings
+    app.state.ctx = ctx
 
     # CORS configuration
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origins,
+        allow_origins=app_settings.cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

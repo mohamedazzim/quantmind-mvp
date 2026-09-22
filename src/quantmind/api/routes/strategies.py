@@ -80,12 +80,12 @@ async def list_strategies(
     try:
         if state:
             rows = conn.execute(
-                "SELECT strategy_id, state, qualification_hash, created_at, updated_at FROM strategies WHERE state = ? ORDER BY updated_at DESC",
+                "SELECT strategy_id, state, qualification_hash, registered_at AS created_at, updated_at FROM strategies WHERE state = ? ORDER BY updated_at DESC",
                 (state.value,),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT strategy_id, state, qualification_hash, created_at, updated_at FROM strategies ORDER BY updated_at DESC"
+                "SELECT strategy_id, state, qualification_hash, registered_at AS created_at, updated_at FROM strategies ORDER BY updated_at DESC"
             ).fetchall()
 
         return [
@@ -266,7 +266,7 @@ async def get_strategy_detail(
             strategy_id=strategy_id,
             state=s["state"],
             qualification_hash=s["qualification_hash"],
-            created_at=s["created_at"],
+            created_at=s["registered_at"],
             updated_at=s["updated_at"],
             specification=spec_dict,
             qualification=qual_dict,

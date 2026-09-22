@@ -33,7 +33,7 @@ class TrialSubmitRequest(BaseModel):
     signal_name: str
     parameters: dict[str, Any]
     dataset_version: str
-    split_zone: str = "DISCOVERY"
+    split_zone: str = "RESEARCH"
     research_protocol_version: str = "RP-2"
     seed: int = 42
     mode: str = "FIXTURE"

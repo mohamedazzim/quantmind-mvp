@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from quantmind.app.context import AppContext
 from quantmind.strategy.registry import StrategyLifecycleState
@@ -105,7 +106,7 @@ class DashboardAdapter:
             # 9. Recent strategies
             strat_recent = conn.execute(
                 """
-                SELECT strategy_id, state, qualification_hash, created_at, updated_at
+                SELECT strategy_id, state, qualification_hash, registered_at AS created_at, updated_at
                 FROM strategies ORDER BY updated_at DESC LIMIT 6
                 """
             ).fetchall()
@@ -120,20 +121,26 @@ class DashboardAdapter:
                 for r in strat_recent
             ]
 
+            summary_data = {
+                "total_strategies": total_strategies,
+                "active_strategies": active_strategies,
+                "eligible_strategies": eligible_strategies,
+                "degraded_strategies": degraded_strategies,
+                "retired_strategies": retired_strategies,
+                "total_trials": total_trials,
+                "total_degradations": total_degradations,
+                "total_degradation_events": total_degradations,
+                "total_feedback": total_feedback,
+                "risk_events_count": risk_events_count,
+                "total_net_pnl": round(total_net_pnl, 2),
+                "average_sharpe": round(avg_sharpe, 2),
+                "avg_sharpe_ratio": round(avg_sharpe, 2),
+            }
+
             return {
-                "summary": {
-                    "total_strategies": total_strategies,
-                    "active_strategies": active_strategies,
-                    "eligible_strategies": eligible_strategies,
-                    "degraded_strategies": degraded_strategies,
-                    "retired_strategies": retired_strategies,
-                    "total_trials": total_trials,
-                    "total_degradations": total_degradations,
-                    "total_feedback": total_feedback,
-                    "risk_events_count": risk_events_count,
-                    "total_net_pnl": round(total_net_pnl, 2),
-                    "average_sharpe": round(avg_sharpe, 2),
-                },
+                **summary_data,
+                "summary": summary_data,
+                "kpis": summary_data,
                 "counts_by_state": counts_by_state,
                 "recent_transitions": recent_transitions,
                 "recent_degradations": recent_degradations,

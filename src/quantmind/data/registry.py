@@ -308,6 +308,8 @@ class DatasetRegistry:
             frame = pd.read_csv(path)
         else:
             frame = pd.read_parquet(path)
+        if "open_interest" not in frame.columns:
+            frame["open_interest"] = 0.0
         self._data_cache[path] = (expected_sha256, frame)
         return frame
 

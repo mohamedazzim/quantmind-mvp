@@ -1,0 +1,16 @@
+.git
+.gitignore
+.env
+.env.*
+node_modules
+web/node_modules
+web/.next
+data/
+artifacts/
+*.db
+*.db-journal
+__pycache__
+*.pyc
+.pytest_cache
+.coverage
+htmlcov/

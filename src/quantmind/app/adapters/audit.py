@@ -486,7 +486,7 @@ class AuditAdapter:
                     )
 
                 # Virtual Feedback Task
-                task_id = derive_feedback_task_id(f_hash)
+                task_id = derive_feedback_task_id(f_hash, "RP-1.0")
                 add_node(
                     task_id,
                     f"Research Task: {task_id[:16]}",
