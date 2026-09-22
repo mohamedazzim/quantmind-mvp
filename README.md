@@ -1,193 +1,443 @@
 # QuantMind MVP
 
-Futures-first AI-assisted quantitative research laboratory.
+**Futures-first AI-assisted quantitative research laboratory.**
 
-## Current build stage
+QuantMind is an institutional-grade platform for deterministic quantitative research, backtesting, paper (simulated) trading, and lifecycle governance. It pairs a closed, deterministic research kernel with a productized FastAPI + Next.js application layer, enforcing cryptographic provenance, immutable append-only ledgers, and strict split/embargo discipline across the entire strategy lifecycle — from idea to paper-eligible deployment.
 
-**Stage: QuantMind PRD v4.0 — Full Four-Quadrant Research, Evaluation, Governance & Feedback Architecture**
+---
 
-Current verification: **732 tests passing** across synthetic market generation, real gap/wick semantics, cross-session surrogates, directional intraday nulls, recomputable causal positive controls, independent wick preservation, paired edge recovery, one-sided confidence-bound gates, look-ahead canary, checksum-verified Dataset Registry, immutable SplitManifest, purge and embargo boundaries, sealed final holdout security, holdout state machine, comprehensive adversarial integrity tests, immutable OOS return Parquet artifacts, SHA-256 byte verification, production population accounting, EICT-CORR-1 hierarchical clustering, Deflated Sharpe Ratio multiple-testing adjustment (Bailey & López de Prado 2014), permutation-invariant clustering, multiple-testing anti-bypass guards, deterministic Strategy Validation Gate, immutable Strategy Qualification Records with canonical SHA-256 digests, append-only SQLite qualification ledger triggers, Strategy Registry lifecycle state machine, normalized MarketDataFeed streaming, deterministic PaperReplayEngine execution, pre-trade risk controls, append-only PaperLedger, deterministic SHA-256 ReplayReport verification, append-only EvaluationLedger (6 tables with trigger immutability), PaperEvaluationBaseline & Regime registration, periodic MonitoringSnapshots, DegradationEvent detection, PaperGovernanceService lifecycle state machine with causal ordering and flat retirement guards, ResearchFeedbackRecord post-mortem capture, zero-trial ResearchFeedbackBridge, and full 26-scenario cross-milestone adversarial verification.
+## Table of Contents
 
-See [docs/PRD_v4.0.md](docs/PRD_v4.0.md) for the complete PRD v4.0 architectural specification and closure record.
+1. [Overview](#overview)
+2. [Architecture](#architecture)
+3. [Repository Structure](#repository-structure)
+4. [Technology Stack](#technology-stack)
+5. [Quickstart](#quickstart)
+6. [Configuration](#configuration)
+7. [Application Modes](#application-modes)
+8. [Authentication & RBAC](#authentication--rbac)
+9. [Data Storage Model](#data-storage-model)
+10. [Research Integrity Pipeline](#research-integrity-pipeline)
+11. [Paper Trading & Evaluation](#paper-trading--evaluation)
+12. [API Reference](#api-reference)
+13. [Testing](#testing)
+14. [Deployment](#deployment)
+15. [Security Posture](#security-posture)
+16. [Documentation Index](#documentation-index)
+17. [Roadmap & Known Scope](#roadmap--known-scope)
 
-## Milestones (PRD v4.0 Complete)
+---
 
-1. Core domain models
-2. Synthetic futures-bar generator
-3. Cross-session structure-preserving surrogate
-4. Hypothesis-specific directional null
-5. Observable symmetric positive-control injector
-6. Gap-only look-ahead canary
-7. Confidence-bound acquisition gate sourced from YAML
-8. Deterministic next-bar-open futures backtest regression harness
-9. ResearchHarness + append-only trial ledger + cumulative research budget
-10. Declarative StrategySpec + typed whitelist compiler; arbitrary agent signal code is excluded from production trials
-11. Checksum-verified Dataset Registry + named split-zone loader; production harness accepts LICENSED data only
-12. Purged/embargoed split manager and sealed holdout (v3.5)
-13. Research population accounting + trial return artifacts + EICT-CORR-1 / DSR inputs (v3.6)
-14. Statistical validation: EICT-CORR-1 + Deflated Sharpe Ratio (v3.7 / v3.7.1)
-15. Strategy Validation Gate + Immutable Qualification Record (v3.8)
-16. Deterministic Paper Replay Engine + Normalized Replay Feed + Pre-Trade Risk Controls (v3.9)
-17. Paper Evaluation Ledger, Baselines, Regimes & Monitoring Snapshots (PRD v4.0 M5.3)
-18. Paper Evaluation State Machine, Lifecycle Execution Gating & Governance (PRD v4.0 M6)
-19. Research Feedback Bridge & Observational Post-Mortem Records (PRD v4.0 M7)
-20. Final Documentation & Comprehensive Cross-Milestone Adversarial Verification (PRD v4.0 M8)
+## Overview
 
+QuantMind addresses the core failure modes of overfit quantitative research by making every step of the strategy lifecycle **deterministic, auditable, and gated**:
 
-## Production Research Architecture
+- **Deterministic research kernel** — reproducible backtests with a next-bar-open execution model, purge/embargo split boundaries, and a sealed final holdout that no research agent can touch.
+- **Cryptographic provenance** — every strategy, qualification record, baseline, report, and feedback record carries a SHA-256 digest over its canonical representation, forming a verifiable directed acyclic graph (DAG).
+- **Append-only ledgers** — SQLite tables protected by database triggers that abort any `DELETE` or `UPDATE`, so results cannot be retroactively edited.
+- **Statistical rigor** — effective trial count via hierarchical correlation clustering (EICT-CORR-1) and Deflated Sharpe Ratio (Bailey & López de Prado, 2014) to correct for multiple-testing bias.
+- **Strict no-live-trading boundary** — execution is entirely simulated; there are no broker endpoints, credentials, or live order routing anywhere in the codebase.
 
-The production research path is strictly sequential and callers never supply arbitrary DataFrames or file paths:
+The current build stage is **PRD v4.0 — Full Four-Quadrant Research, Evaluation, Governance & Feedback Architecture**.
 
-```text
-DatasetRegistry (checksum-verified, immutable)
-    ↓
-SplitManager / SplitManifest (purged & embargoed boundaries)
-    ↓
-ResearchHarness (enforces LICENSED dataset, non-holdout split zone, budget)
-    ↓
-StrategyCompiler (whitelist compilation of declarative StrategySpec)
-    ↓
-CausalityPreflight (asserts causal signals across cut points)
-    ↓
-BacktestEngine (deterministic next-bar-open execution)
-    ↓
-ArtifactRegistry (persists immutable OOS returns Parquet with SHA-256 digest)
-    ↓
-TrialLedger (append-only, immutable completed trials with split_zone & artifact hash)
-    ↓
-ProductionPopulationQuery (authoritative production trial filter)
-    ↓
-EictCorr1Calculator (hierarchical average-linkage clustering, singleton isolation)
-    ↓
-DeflatedSharpeCalculator (Bailey & López de Prado DSR formulation)
-    ↓
-StrategyValidationGate (authoritative gate, protocol sample size requirements, holdout verification)
-    ↓
-QualificationLedger (append-only SQLite table with delete/update abort triggers)
-    ↓
-StrategyRegistry (lifecycle state machine enforcing qualification record for PAPER_ELIGIBLE)
-    ↓
-PaperReplayEngine (accepts PAPER_ELIGIBLE + PASSED holdout, checks spec & dataset hash)
-    ↓
-ReplayFeed (normalized MarketDataFeed interface, fast vectorized streaming)
-    ↓
-PaperRiskEngine (evaluates 7 deterministic pre-trade risk rules)
-    ↓
-PaperLedger (append-only SQLite ledger with triggers: orders, fills, positions, risk events)
-    ↓
-ReplayReport (deterministic observational report sealed with SHA-256 report_hash)
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     Next.js 14 App Router (Web UI)                      │
+│      Dark Institutional Interface • TypeScript • Tailwind CSS • React   │
+└────────────────────────────────────┬────────────────────────────────────┘
+                                     │ HTTP / REST (JWT Auth)
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      FastAPI Application Gateway                        │
+│         OpenAPI Documentation • Dependency Injection • RBAC             │
+└─────────────┬─────────────────────────────────────────────┬─────────────┘
+              │                                             │
+              ▼                                             ▼
+┌───────────────────────────┐                 ┌───────────────────────────┐
+│  Application Services     │                 │   Job Orchestrator        │
+│  AuthService • Audit      │                 │   Persistent SQLite Queue │
+│  Dashboard Aggregator     │                 └─────────────┬─────────────┘
+└─────────────┬─────────────┘                               │
+              │                                             ▼
+              │                               ┌───────────────────────────┐
+              │                               │ Dedicated Background      │
+              │                               │ Worker Daemon             │
+              ▼                               └─────────────┬─────────────┘
+┌───────────────────────────────────────────────────────────┴─────────────┐
+│                      QuantMind v4.0 Core Domain Kernel                  │
+│   ResearchHarness • StrategyValidationGate • PaperReplayEngine           │
+│   EvaluationLedger • PaperGovernanceService • FeedbackBridge             │
+└────────────────────────────────────┬────────────────────────────────────┘
+                                     │
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    Separated Storage Architecture                       │
+│                                                                         │
+│   data/quantmind_core.db (Authoritative Ledger — 20 domain tables)      │
+│   data/quantmind_app.db  (Application Metadata — users, jobs, audits)   │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Deterministic Paper Replay Engine, Replay Feed, & Risk Controls (v3.9)
+### Five Immutable Boundary Principles
 
-- **`MarketDataFeed` & `ReplayFeed`**: Normalized market data feed interface with high-performance zero-overhead streaming via pre-extracted NumPy arrays. Tracks session boundaries, supports pause/resume/reset, and strictly prohibits access to sealed `FINAL_HOLDOUT` partitions (`MarketFeedSecurityError`).
-- **Qualification Gating & Provenance Verification**: Replay strictly requires an authoritative `StrategyQualificationRecord` with `final_status == ValidationStatus.PAPER_ELIGIBLE` and `holdout_state == "PASSED"`. Verifies cryptographic record digest, strategy specification hash match, strategy ID match, dataset checksum match, and protocol version compatibility. Synthetic/fixture datasets are barred from production paper replay.
-- **Deterministic Execution Model (`next_bar_open_v1`)**: Causal execution executing bar $t$ signal at bar $t+1$ open with realistic slippage modeling (`slippage_bps_per_side`), price quantization to instrument tick size (e.g. 0.05 for NIFTY futures), date-effective cost schedule resolution (`CostSchedule`), and multi-bar holding duration.
-- **Pre-Trade Deterministic Risk Engine (`PaperRiskEngine`)**: Evaluates 7 deterministic pre-trade risk rules (`kill_switch`, `max_order_quantity`, `max_position`, `max_trades_per_session`, `max_daily_loss`, `max_strategy_drawdown`, `max_exposure`). Rejections generate immutable `PaperRiskEvent` audit records and set order status to `REJECTED`.
-- **Append-Only Paper Ledger (`PaperLedger`)**: Backed by SQLite tables (`paper_orders`, `paper_fills`, `paper_positions`, `paper_risk_events`, `replay_reports`) protected by database triggers preventing deletions or updates.
-- **Deterministic Observational Report (`ReplayReport`)**: Produces observational performance summaries (gross/net P&L, costs, slippage, max drawdown, exposure, win rate, expectancy, Sharpe) sealed with a deterministic SHA-256 `report_hash` over its canonical JSON representation.
-- **Strict No-Live-Trading Boundary**: Zero broker network endpoints, credentials, or live order routing. Execution is entirely simulated.
+1. **Deterministic core invariance** — the API and frontend never execute backtests in the HTTP request cycle; trials and replays flow through the `JobOrchestrator` and are executed by the dedicated `QuantMindWorker`.
+2. **Direct ledger-write prohibition** — no HTTP handler performs direct SQL updates/deletes on authoritative core tables; state transitions are owned exclusively by domain services.
+3. **Database segregation** — credentials, tokens, job status, and user audit logs live only in `quantmind_app.db`; all mathematical results, specs, qualifications, baselines, and ledgers live only in `quantmind_core.db`.
+4. **Non-optimistic governance barrier** — a strategy cannot reach `PAPER_ACTIVE` without a cryptographically bound evaluation baseline; attempts fail closed with HTTP 422 (`GOVERNANCE_INTEGRITY_VIOLATION`).
+5. **Multi-milestone provenance** — all entities form a connected DAG verifiable across five cryptographic edge types (`Type A`–`Type E`).
 
-### Strategy Validation Gate & Immutable Qualification Record (v3.8)
+---
 
-- **`StrategyValidationGate`**: Deterministic gate consuming authoritative system evidence only (`DatasetRegistry`, `SplitManifest`, `HoldoutManager`, `TrialLedger`, `ProductionPopulationQuery`, `EICT-CORR-1`, `DSR`, and `StrategySpec`). Rejects any manual statistical overrides (`manual_sharpe`, `manual_dsr`, `manual_trials`). Dynamically evaluates protocol-defined sample size requirements (`minimum_trades_validation`, `minimum_effective_outcome_observations`).
-- **`StrategyQualificationRecord`**: Frozen dataclass containing complete provenance, observed Sharpe, DSR, EICT, trade count, holdout state, robustness status, and validation status, sealed by a SHA-256 digest over its canonical JSON.
-- **`QualificationLedger`**: Append-only SQLite ledger with triggers raising SQL integrity errors on any `DELETE` or `UPDATE` attempt.
-- **Validation State Machine**: Enforces legal transitions (`CANDIDATE` -> `UNDERPOWERED` / `VALIDATION` / `REJECTED` / `HOLDOUT_REQUIRED` -> `HOLDOUT_PASSED` -> `PAPER_ELIGIBLE`). Illegal shortcuts (e.g. `REJECTED` -> `PAPER_ELIGIBLE` or `UNDERPOWERED` -> `PAPER_ELIGIBLE`) are permanently barred.
-- **`StrategyRegistry`**: Tracks 8 authoritative lifecycle states (`IDEA`, `RESEARCH`, `VALIDATION`, `REJECTED`, `PAPER_ELIGIBLE`, `PAPER_ACTIVE`, `DEGRADED`, `RETIRED`). Transition to `PAPER_ELIGIBLE` strictly requires an authoritative, cryptographically verified `StrategyQualificationRecord` with `final_status == ValidationStatus.PAPER_ELIGIBLE` and `holdout_state == "PASSED"`.
-- **`PaperReplayEligibility`**: Cryptographically verifies qualifications to authorize deterministic forward replay testing without starting live broker trading.
+## Repository Structure
 
+```
+quantmind-working/
+├── configs/                        # Versioned research-protocol YAML (RP-1, RP-2)
+├── docs/                           # PRD v3.1 → v4.0, architecture, API, dev guide, QA report
+├── scripts/                        # Demo seeding + live-QA / domain-barrier verification
+├── src/quantmind/
+│   ├── domain/                     # Core dataclasses: Bar, Order, Fill, Trial, FuturesContract
+│   ├── backtest/                   # Deterministic backtest engine + causal-signal guards
+│   ├── strategy/                   # StrategySpec, compiler, registry + lifecycle state machine
+│   ├── data/                       # Dataset registry, split manifests, purge/embargo zones
+│   ├── synthetic/                  # Synthetic futures-bar generator + adversarial canaries
+│   ├── research_integrity/         # Harness, holdout, population, EICT/DSR, qualification gate
+│   ├── paper/                      # Paper replay engine, risk, ledger, evaluation subsystem
+│   ├── testing/                     # Fixture-only research harness (never imported in production)
+│   ├── app/                        # FastAPI services: auth, jobs, worker, adapters, config, CLI
+│   └── api/                        # FastAPI routers + Pydantic schemas + error handlers
+├── tests/                          # unit / integration / api / e2e (38 test files)
+├── web/                            # Next.js 14 App Router frontend
+├── Dockerfile.api                  # FastAPI service image
+├── Dockerfile.worker               # Dedicated worker image
+├── Dockerfile.web                  # Multi-stage Next.js image
+├── docker-compose.yml              # Full three-tier stack
+└── pyproject.toml                  # Python package + dependencies + pytest config
+```
 
+---
 
-### Statistical Validation: EICT-CORR-1 + Deflated Sharpe Ratio (v3.7)
+## Technology Stack
 
-- **LAYER A — EICT-CORR-1**: Computes effective independent trial count via hierarchical clustering with average linkage at distance threshold $0.6325$ ($\sqrt{2(1 - 0.80)}$). Sparse trials ($< 100$ common observations) are isolated as singleton clusters. Outputs deterministic cluster mappings and cryptographic `population_hash`.
-- **LAYER B — Deflated Sharpe Ratio (DSR)**: Implements Bailey & López de Prado (2014) formulation adjusting for selection bias, effective trial count ($N = \text{effective\_trial\_count}$), non-normality (skewness, Fisher excess kurtosis), and sample length $T$.
-- **Multiple-Testing Guard**: Rigid architectural enforcement barring manual overrides of `observed_sharpe` or `effective_trial_count`. All statistical evaluations must anchor to an authoritative `ProductionPopulationQuery`.
-- **Integrated Pipeline**: `StatisticalValidationPipeline` automates population loading, EICT clustering, and candidate DSR evaluation.
+| Layer | Technology |
+| :--- | :--- |
+| Language | Python 3.10+ |
+| API | FastAPI (0.110+), Uvicorn, Pydantic v2, pydantic-settings |
+| Frontend | Next.js 14 (App Router), React 18, TypeScript 5, Tailwind CSS 3 |
+| Data | SQLite (dual-DB separation), NumPy, pandas, PyArrow, SciPy |
+| Auth | PyJWT (HS256), PBKDF2-SHA256 (passlib-style, 100k iterations) |
+| Async jobs | Persistent SQLite queue + dedicated polling worker daemon |
+| Testing | pytest 8+, pytest-cov, Playwright (browser E2E) |
+| Deployment | Docker + Docker Compose |
+| Linting | Ruff |
 
-### Research Population Accounting & OOS Return Artifacts (v3.6)
+---
 
-- **OOS Return Artifacts**: Every completed `PRODUCTION` trial records its complete trade stream into an immutable Parquet file matching `_OOS_RETURNS_SCHEMA`.
-- **Cryptographic Auditability**: Each artifact has a SHA-256 digest verified at load time. Files and database registry records cannot be updated or deleted (guaranteed by SQLite triggers and `ArtifactImmutabilityError`).
-- **Production Population Eligibility**: Only terminal `COMPLETED` production trials within the scope `(dataset_version, research_protocol_version)` with verified artifacts enter the research population. Fixture, failed, non-causal, abandoned, or holdout-rejected trials are permanently barred.
-- **EICT-CORR-1 Inputs**: Aligns common timestamps across pairs, computes Pearson correlation and distance $d = \sqrt{2(1-r)}$, and isolates singleton clusters when common observations fall below 100. Protocol constants are verified and protected against runtime mutation.
-- **DSR Inputs**: Generates return distribution summaries (mean, std, skewness, Fisher kurtosis, observed Sharpe, effective observations) as the input layer for future Deflated Sharpe Ratio calculation.
+## Quickstart
 
-### Split Manager & Sealed Holdout (v3.5)
+### Prerequisites
 
-- **`SplitManifest`**: Defines `RESEARCH`, `VALIDATION`, `FINAL_HOLDOUT`, and `FORWARD_PAPER` zones with versioned, immutable boundaries.
-- **Purge & Embargo**: Purge windows are derived from temporal dependencies (`feature_lookback + prediction_horizon + holding_period + forward_dependency`), preventing overlapping label windows. Embargo buffers prevent serial correlation leakage.
-- **High-Performance Zone Loading**: Extracted via numpy boolean masks (no `.iloc` loops) with in-memory caching and SHA-256 verification.
-- **Sealed `FINAL_HOLDOUT`**: Standard research APIs and agents (`load_zone`, `ResearchHarness.run_trial`) are prohibited from requesting holdout data.
-- **Dedicated `final_evaluate()` Gateway**: Candidates can only evaluate holdout if they have passed earlier required gates (completed `RESEARCH` or `VALIDATION` trial).
-- **Holdout State Machine**: Tracks `UNTOUCHED`, `EVALUATED`, `PASSED`, `FAILED`, and `BURNED`. Failed candidates are permanently blocked from retuning or re-evaluating against that holdout dataset. Burned holdouts cannot be evaluated or tuned against.
-- **Trust Boundary**: The production boundary is enforced through `ResearchHarness` + `DatasetRegistry` + `StrategyCompiler` + `TrialLedger`. In-process Python trust limitations (e.g. direct private method invocation or SQLite file permissions) will be hardened in future releases via PostgreSQL role-level security.
+- Python `3.10.x` or higher
+- Node.js `v18.x` / `v20.x` or higher, npm `v9.x`+
+- Docker & Docker Compose (optional, for containerized deployment)
 
-## Productized Application Layer (FastAPI + Next.js + Dedicated Worker)
-
-The QuantMind application builds an interactive institutional platform around the closed v4.0 research kernel:
-
-- **Next.js 14 Web Interface**: Modern, dark quantitative console (`web/`) with 16 App Router views:
-  - `/dashboard`: Real-time portfolio KPIs, active paper strategies, recent degradations, and governance feed.
-  - `/strategies`: Strategy registry, canonical specification inspection, and 8-state lifecycle manager.
-  - `/datasets`: Versioned licensed and synthetic dataset catalog, temporal split boundaries (`RESEARCH`, `VALIDATION`, `FINAL_HOLDOUT`, `FORWARD_PAPER`).
-  - `/research`: Declarative strategy candidate builder with compiler validation and asynchronous trial dispatch.
-  - `/trials`: Immutable trial ledger explorer with population eligibility indicators and backtest metric charts.
-  - `/qualification`: Statistical qualification gate reports with Deflated Sharpe Ratio (DSR) and EICT-CORR-1 clustering.
-  - `/paper`: Forward paper trading cockpit, simulated orders, execution fills, real-time positions, and replay reports.
-  - `/monitoring`: Rolling evaluation windows, max drawdown breach tracking, and degradation alerts.
-  - `/governance`: Cryptographically sealed governance transition audit trail.
-  - `/feedback`: Structured empirical failure mode records and zero-trial research feedback bridge tasks.
-  - `/audit`: Interactive 5-type cryptographic provenance DAG explorer (`Type A`, `Type B`, `Type C`, `Type D`, `Type E`).
-- **FastAPI Gateway**: High-performance REST API (`src/quantmind/api/`) enforcing RBAC (`ADMIN`, `RESEARCHER`, `VIEWER`), OpenAPI schema introspection, and non-optimistic governance barriers.
-- **Dedicated Background Worker**: Independent daemon (`python -m quantmind.app.worker`) consuming persistent SQLite queues, tracking live job progress, and performing automatic crash recovery on startup.
-- **Documentation**:
-  - [docs/APP_ARCHITECTURE.md](docs/APP_ARCHITECTURE.md): Architectural design, storage segregation, and 5-type provenance DAG.
-  - [docs/API.md](docs/API.md): Comprehensive REST API endpoint reference.
-  - [docs/LOCAL_DEVELOPMENT.md](docs/LOCAL_DEVELOPMENT.md): Local development, demo seeding, and deployment guide.
-
-## Quickstart & Local Execution
+### Local development (three processes)
 
 ```bash
-# 1. Install dependencies
+# 1. Install Python dependencies (editable)
 pip install -e .
+
+# 2. Install frontend dependencies
 cd web && npm install && cd ..
 
-# 2. Seed Demo Environment
+# 3. Seed the demo environment (APP_ENV=DEMO)
 python scripts/seed_demo_data.py --force
 
-# 3. Run Backend Gateway (Terminal 1)
-uvicorn quantmind.api.app:create_app --factory --reload --port 8000
+# 4. Start the API gateway (Terminal 1)
+uvicorn quantmind.api.app:create_app --factory --reload --host 127.0.0.1 --port 8000
 
-# 4. Run Dedicated Worker Daemon (Terminal 2)
+# 5. Start the worker daemon (Terminal 2)
 python -m quantmind.app.worker
 
-# 5. Run Web Console (Terminal 3)
+# 6. Start the web console (Terminal 3)
 cd web && npm run dev
 ```
 
-Visit `http://localhost:3000` and sign in with demo credentials:
-- `demo_admin` / `QuantMindDemoAdmin2026!`
+Visit `http://localhost:3000`. Swagger UI is at `http://127.0.0.1:8000/docs`.
 
-Or run with Docker Compose:
+### Docker Compose (single command)
+
+```bash
+docker-compose up --build -d
+docker-compose logs -f      # follow logs
+docker-compose down         # stop
+```
+
+---
+
+## Configuration
+
+Configuration is centralized in `src/quantmind/app/config.py` (`AppSettings`, a `pydantic-settings` model). Values are read from environment variables or a `.env` file.
+
+| Environment variable | Default | Purpose |
+| :--- | :--- | :--- |
+| `APP_ENV` | `development` | Operational mode: `PRODUCTION` \| `DEVELOPMENT` \| `DEMO` |
+| `API_HOST` | `0.0.0.0` | API bind host |
+| `API_PORT` | `8000` | API bind port |
+| `QUANTMIND_DATA_DIR` | `data` | Root data directory |
+| `QUANTMIND_CORE_DB_PATH` | `data/quantmind_core.db` | Authoritative core-ledger SQLite path |
+| `QUANTMIND_APP_DB_PATH` | `data/quantmind_app.db` | Application-metadata SQLite path |
+| `AUTH_SECRET_KEY` | *(insecure dev default)* | JWT signing key — **must be overridden in production** |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:8000/api/v1` | Client-side API base URL (web build arg) |
+| `INTERNAL_API_URL` | `http://api:8000` | Server-side proxy destination (Docker service name) |
+
+> ⚠️ The default `AUTH_SECRET_KEY` is a documented-insecure placeholder. Always set `AUTH_SECRET_KEY` to a strong secret in `PRODUCTION`.
+
+---
+
+## Application Modes
+
+| Mode | Description | Credentials |
+| :--- | :--- | :--- |
+| `PRODUCTION` | Strict institutional execution. | Zero default users — admin bootstrapped via CLI. |
+| `DEVELOPMENT` | Local developer mode. | Permissive CORS, verbose logging. |
+| `DEMO` | Platform demonstration & evaluation. | Pre-seeded demo users + realistic market data. |
+
+### Bootstrapping the admin account
+
+```bash
+# Interactive (password hidden)
+python -m quantmind.app.cli bootstrap-admin --username admin --email admin@firm.com
+
+# Non-interactive / CI (min 12 chars)
+python -m quantmind.app.cli bootstrap-admin --username admin --email admin@firm.com \
+  --password "InstitutionalSecure2026!"
+```
+
+### Demo credentials (`APP_ENV=DEMO` only)
+
+| Role | Username | Password |
+| :--- | :--- | :--- |
+| Admin | `demo_admin` | `QuantMindDemoAdmin2026!` |
+| Researcher | `demo_researcher` | `QuantMindDemoResearch2026!` |
+| Viewer | `demo_viewer` | `QuantMindDemoViewer2026!` |
+
+---
+
+## Authentication & RBAC
+
+- **Password hashing** — PBKDF2 with SHA-256, 100,000 iterations, unique 16-byte random salt per user.
+- **Session tokens** — signed JWT (`HS256`), 24-hour expiration, carrying user ID, username, and role.
+- **Roles**:
+  - `ADMIN` — full access: lifecycle activation, retirement, user creation, worker control.
+  - `RESEARCHER` — spec validation, trial submission, qualification, re-research transitions.
+  - `VIEWER` — read-only access to dashboards, ledgers, reports, and provenance graphs.
+- **Credential hygiene** — zero hardcoded production passwords; demo accounts are strictly gated to `APP_ENV=DEMO`.
+
+---
+
+## Data Storage Model
+
+Two strictly separated SQLite databases:
+
+### Authoritative core ledger — `quantmind_core.db` (20 tables)
+
+| Concern | Tables |
+| :--- | :--- |
+| Datasets & splits | `datasets`, `dataset_zones`, `dataset_split_manifests` |
+| Strategies | `strategies`, `strategy_qualifications` |
+| Trials | `trials`, `trial_artifacts` |
+| Paper execution | `paper_orders`, `paper_fills`, `paper_positions`, `paper_risk_events`, `paper_reports` |
+| Evaluation & governance | `evaluation_baselines`, `paper_evaluation_regimes`, `monitoring_snapshots`, `degradation_events`, `paper_evaluation_transitions`, `research_feedback` |
+| Holdout security | `holdout_burns`, `holdout_evaluations` |
+
+### Application metadata — `quantmind_app.db` (3 tables)
+
+- `users` — identity, PBKDF2 salt/hash, role, active state, password-rotation flag.
+- `jobs` — background queue (`JOB-<hex>`, type, status, progress %, result payload/ref).
+- `app_audit_logs` — user-initiated operations (`STRATEGY_ACTIVATE`, `JOB_SUBMIT`, …).
+
+Immutability is enforced with SQLite triggers (e.g. `paper_orders_no_delete`, `paper_orders_no_update`) that raise integrity errors on any modification attempt.
+
+---
+
+## Research Integrity Pipeline
+
+The production research path is strictly sequential; callers never supply arbitrary DataFrames or file paths:
+
+```
+DatasetRegistry (checksum-verified, immutable)
+  → SplitManager / SplitManifest (purged & embargoed boundaries)
+  → ResearchHarness (LICENSED dataset, non-holdout zone, budget enforcement)
+  → StrategyCompiler (whitelist compilation of declarative StrategySpec)
+  → CausalityPreflight (causal signals across cut points)
+  → BacktestEngine (deterministic next-bar-open execution)
+  → ArtifactRegistry (immutable OOS returns Parquet + SHA-256 digest)
+  → TrialLedger (append-only, immutable trials)
+  → ProductionPopulationQuery (authoritative production trial filter)
+  → EictCorr1Calculator (hierarchical average-linkage clustering)
+  → DeflatedSharpeCalculator (Bailey & López de Prado DSR)
+  → StrategyValidationGate (protocol sample-size + holdout verification)
+  → QualificationLedger (append-only, delete/update-abort triggers)
+  → StrategyRegistry (state machine; PAPER_ELIGIBLE requires qualification)
+  → PaperReplayEngine (PAPER_ELIGIBLE + PASSED holdout)
+  → ReplayFeed (normalized, vectorized streaming)
+  → PaperRiskEngine (7 deterministic pre-trade risk rules)
+  → PaperLedger (append-only orders/fills/positions/risk events)
+  → ReplayReport (deterministic, sealed with SHA-256 report_hash)
+```
+
+### Split & holdout discipline
+
+- **Split zones**: `RESEARCH`, `VALIDATION`, `FINAL_HOLDOUT`, `FORWARD_PAPER`.
+- **Purge & embargo** windows derived from temporal dependencies prevent label overlap and serial-correlation leakage.
+- **Sealed `FINAL_HOLDOUT`** — standard research APIs cannot request holdout data; candidates may only evaluate via the dedicated `final_evaluate()` gateway after passing earlier gates.
+- **Holdout state machine**: `UNTOUCHED` → `EVALUATED` → `PASSED` / `FAILED` / `BURNED`; failed candidates are permanently blocked from re-tuning against that holdout.
+
+### Statistical validation
+
+- **EICT-CORR-1** — effective independent trial count via hierarchical clustering with average linkage at distance threshold 0.6325; sparse trials (< 100 common observations) isolated as singleton clusters.
+- **Deflated Sharpe Ratio (DSR)** — Bailey & López de Prado (2014) formulation adjusting for selection bias, effective trial count, non-normality, and sample length.
+
+### Strategy lifecycle state machine
+
+```
+IDEA → RESEARCH → VALIDATION → PAPER_ELIGIBLE → PAPER_ACTIVE → DEGRADED → RETIRED
+                      │              │              │
+                      ▼              ▼              ▼
+                  REJECTED       REJECTED       REJECTED
+```
+
+`PAPER_ELIGIBLE` strictly requires a cryptographically verified `StrategyQualificationRecord` with `final_status == PAPER_ELIGIBLE` and `holdout_state == PASSED`. Illegal shortcuts (e.g. `REJECTED → PAPER_ELIGIBLE`) are permanently barred.
+
+---
+
+## Paper Trading & Evaluation
+
+The paper subsystem simulates execution over the closed kernel and tracks post-deployment health:
+
+- **`PaperReplayEngine`** — deterministic forward replay with qualification gating, provenance verification (spec hash, strategy ID, dataset checksum, protocol version), and synthetic/fixture dataset barring.
+- **`ReplayFeed`** — normalized `MarketDataFeed` interface with pre-extracted NumPy arrays; strictly prohibits access to sealed `FINAL_HOLDOUT` partitions.
+- **`PaperRiskEngine`** — 7 deterministic pre-trade risk rules: `kill_switch`, `max_order_quantity`, `max_position`, `max_trades_per_session`, `max_daily_loss`, `max_strategy_drawdown`, `max_exposure`.
+- **`PaperLedger`** — append-only tables for orders, fills, positions, risk events, and reports.
+- **`EvaluationLedger`** — baselines, regimes, monitoring snapshots, and degradation events.
+- **`PaperGovernanceService`** — lifecycle state machine with causal ordering and flat-retirement guards.
+- **`ResearchFeedbackBridge`** — zero-trial post-mortem records and derived research tasks.
+
+**Strict no-live-trading boundary** — execution is entirely simulated; there are zero broker endpoints or credentials in the codebase.
+
+---
+
+## API Reference
+
+All routes are mounted under `/api/v1` and documented at `http://localhost:8000/docs` (Swagger) and `/redoc`.
+
+| Resource | Representative endpoints |
+| :--- | :--- |
+| Auth | `POST /auth/login`, `GET /auth/me`, `POST /auth/logout`, `POST /auth/change-password`, `GET /auth/audit-logs` |
+| Dashboard | `GET /dashboard/kpis` |
+| Datasets | `GET /datasets`, `GET /datasets/enums`, `GET /datasets/{version}` |
+| Strategies | `GET /strategies`, `GET /strategies/spec-schema`, `GET /strategies/{id}`, `POST /strategies/{id}/activate` (ADMIN), `/retire` (ADMIN), `/re-research` |
+| Research | `POST /research/candidates/validate`, `POST /research/trials/submit`, `GET /research/tasks`, `GET /research/tasks/{id}` |
+| Trials | `GET /trials`, `GET /trials/{id}`, `GET /trials/population/summary` |
+| Qualification | `GET /qualification`, `GET /qualification/{strategy_id}` |
+| Paper | `GET /paper/overview|orders|fills|positions|risk|reports`, `POST /paper/replay/submit` |
+| Monitoring | `GET /monitoring`, `GET /monitoring/{strategy_id}` |
+| Governance | `GET /governance/transitions`, `GET /governance/{strategy_id}` |
+| Feedback | `GET /feedback`, `GET /feedback/{hash}`, `POST /feedback/{hash}/research-task` |
+| Audit | `GET /audit/graph/{identifier}`, `GET /audit/{identifier}` |
+| Jobs | `GET /jobs`, `GET /jobs/{job_id}` |
+
+Health/readiness: `GET /health`, `GET /ready`.
+
+See [docs/API.md](docs/API.md) for the complete reference.
+
+---
+
+## Testing
+
+```bash
+pip install -e ".[dev]"     # install pytest, pytest-cov, ruff
+
+pytest                                        # full suite (745 tests)
+pytest tests/e2e/test_e2e_workflow.py -v      # 15-step quantitative lifecycle
+pytest tests/e2e/test_playwright_ui.py -v     # browser navigation (requires playwright + chromium)
+pytest tests/api/test_api_endpoints.py -v     # FastAPI + worker endpoints
+```
+
+The suite spans **38 test files** across unit, integration, API, and E2E layers, with comprehensive adversarial integrity tests covering: holdout security, purge/embargo boundaries, look-ahead canaries, ledger immutability, provenance tamper-resistance, statistical validation bypass guards, and cross-milestone governance.
+
+> **Verified:** `745 tests passed` (excludes the 2 Playwright browser tests, which require `pip install playwright && python -m playwright install chromium`).
+
+---
+
+## Deployment
+
+### Docker Compose (recommended)
+
+Three services with persistent volume storage:
+
+| Service | Image | Port | Role |
+| :--- | :--- | :--- | :--- |
+| `api` | `Dockerfile.api` | 8000 | FastAPI gateway (healthcheck via `/health`) |
+| `worker` | `Dockerfile.worker` | — | Background job daemon (crash recovery on startup) |
+| `web` | `Dockerfile.web` | 3000 | Next.js production build (multi-stage, non-root user) |
+
+The web container proxies `/api/v1/*` server-side through the App Router catch-all (`web/src/app/api/v1/[...path]/route.ts`) reading `INTERNAL_API_URL` at request time, avoiding Next.js build-time rewrite limitations.
+
 ```bash
 docker-compose up --build -d
 ```
 
-## Running the Automated Test Suite
+### Production hardening checklist
 
-```bash
-# Run full suite (741+ passed across unit, integration, API, and E2E)
-pytest
+1. Set a strong `AUTH_SECRET_KEY`.
+2. Run `APP_ENV=PRODUCTION` (zero default users).
+3. Bootstrap admin via `python -m quantmind.app.cli bootstrap-admin`.
+4. Mount `quantmind_data` to durable storage.
 
-# Run 15-step end-to-end quantitative workflow
-pytest tests/e2e/test_e2e_workflow.py -v
+---
 
-# Run Playwright headless browser navigation test
-pytest tests/e2e/test_playwright_ui.py -v
-```
+## Security Posture
 
-## Backtester scope
+- **Role-based access control** on state-changing endpoints (activation, retirement, trial submission, feedback-task creation).
+- **Append-only ledgers** with SQLite triggers aborting deletes/updates on authoritative tables.
+- **Cryptographic provenance** — SHA-256 digests binding every entity to its ancestors.
+- **Holdout burn protection** — failed candidates cannot re-tune; burned holdouts block all research/tuning.
+- **No live-trading surface** — no broker endpoints, credentials, or order routing exist in the codebase.
+- **PBKDF2 password hashing** and signed JWT sessions with configurable expiration.
 
-The current engine is a deterministic **one-bar-hold regression harness**, not yet the complete Section 33 execution engine. Research trials must enter through `ResearchHarness.run_trial()`, which owns checksum-verified dataset resolution, mandatory causality preflight, typed StrategySpec compilation, harness-generated trial/strategy/experiment IDs, cumulative budget reservation, failure recording, and the internal engine call. Production research trials accept only named LICENSED dataset versions and split zones; caller-supplied DataFrames, precomputed signal columns, and arbitrary signal callables are excluded from the production API. Synthetic fixtures live in `quantmind.testing` and are recorded with `mode=FIXTURE`. Position state, stop/target handling, intrabar adverse-first resolution, futures roll handling, and risk integration remain later work.
+> In-process Python trust limitations (e.g. direct private-method invocation or SQLite file permissions) are documented and slated for future hardening via PostgreSQL role-level security.
+
+---
+
+## Documentation Index
+
+| Document | Purpose |
+| :--- | :--- |
+| [docs/PRD_v4.0.md](docs/PRD_v4.0.md) | PRD v4.0 architectural specification & closure record |
+| [docs/APP_ARCHITECTURE.md](docs/APP_ARCHITECTURE.md) | Productization architecture, storage segregation, provenance DAG |
+| [docs/API.md](docs/API.md) | REST API endpoint reference |
+| [docs/LOCAL_DEVELOPMENT.md](docs/LOCAL_DEVELOPMENT.md) | Setup, seeding, and deployment guide |
+| [docs/LIVE_APPLICATION_QA_REPORT.md](docs/LIVE_APPLICATION_QA_REPORT.md) | Live-application QA findings |
+| [configs/research_protocol_v2.yaml](configs/research_protocol_v2.yaml) | Current research protocol (RP-2) |
+
+---
+
+## Roadmap & Known Scope
+
+The backtester is currently a deterministic **one-bar-hold regression harness** (not yet the complete multi-bar execution engine). Research trials enter only through `ResearchHarness.run_trial()`. Explicitly **out of scope / later work**:
+
+- Position-state management, stop/target handling, intrabar adverse-first resolution, and futures roll handling.
+- PostgreSQL role-level security (currently SQLite + in-process trust).
+- `EVALUATION_WINDOW` job type (declared but not yet implemented by the worker).
+
+Synthetic fixtures live in `quantmind.testing` and are recorded with `mode=FIXTURE`; production trials accept only named `LICENSED` dataset versions and split zones.
+
+---
+
+**Stage:** PRD v4.0 complete · **Version:** 4.0.0 · **License:** not specified in-repo
