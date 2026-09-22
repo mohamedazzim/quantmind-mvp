@@ -124,11 +124,68 @@ ReplayReport (deterministic observational report sealed with SHA-256 report_hash
 - **Holdout State Machine**: Tracks `UNTOUCHED`, `EVALUATED`, `PASSED`, `FAILED`, and `BURNED`. Failed candidates are permanently blocked from retuning or re-evaluating against that holdout dataset. Burned holdouts cannot be evaluated or tuned against.
 - **Trust Boundary**: The production boundary is enforced through `ResearchHarness` + `DatasetRegistry` + `StrategyCompiler` + `TrialLedger`. In-process Python trust limitations (e.g. direct private method invocation or SQLite file permissions) will be hardened in future releases via PostgreSQL role-level security.
 
-## Run tests
+## Productized Application Layer (FastAPI + Next.js + Dedicated Worker)
+
+The QuantMind application builds an interactive institutional platform around the closed v4.0 research kernel:
+
+- **Next.js 14 Web Interface**: Modern, dark quantitative console (`web/`) with 16 App Router views:
+  - `/dashboard`: Real-time portfolio KPIs, active paper strategies, recent degradations, and governance feed.
+  - `/strategies`: Strategy registry, canonical specification inspection, and 8-state lifecycle manager.
+  - `/datasets`: Versioned licensed and synthetic dataset catalog, temporal split boundaries (`RESEARCH`, `VALIDATION`, `FINAL_HOLDOUT`, `FORWARD_PAPER`).
+  - `/research`: Declarative strategy candidate builder with compiler validation and asynchronous trial dispatch.
+  - `/trials`: Immutable trial ledger explorer with population eligibility indicators and backtest metric charts.
+  - `/qualification`: Statistical qualification gate reports with Deflated Sharpe Ratio (DSR) and EICT-CORR-1 clustering.
+  - `/paper`: Forward paper trading cockpit, simulated orders, execution fills, real-time positions, and replay reports.
+  - `/monitoring`: Rolling evaluation windows, max drawdown breach tracking, and degradation alerts.
+  - `/governance`: Cryptographically sealed governance transition audit trail.
+  - `/feedback`: Structured empirical failure mode records and zero-trial research feedback bridge tasks.
+  - `/audit`: Interactive 5-type cryptographic provenance DAG explorer (`Type A`, `Type B`, `Type C`, `Type D`, `Type E`).
+- **FastAPI Gateway**: High-performance REST API (`src/quantmind/api/`) enforcing RBAC (`ADMIN`, `RESEARCHER`, `VIEWER`), OpenAPI schema introspection, and non-optimistic governance barriers.
+- **Dedicated Background Worker**: Independent daemon (`python -m quantmind.app.worker`) consuming persistent SQLite queues, tracking live job progress, and performing automatic crash recovery on startup.
+- **Documentation**:
+  - [docs/APP_ARCHITECTURE.md](docs/APP_ARCHITECTURE.md): Architectural design, storage segregation, and 5-type provenance DAG.
+  - [docs/API.md](docs/API.md): Comprehensive REST API endpoint reference.
+  - [docs/LOCAL_DEVELOPMENT.md](docs/LOCAL_DEVELOPMENT.md): Local development, demo seeding, and deployment guide.
+
+## Quickstart & Local Execution
 
 ```bash
-python -m pip install -e '.[dev]'
-pytest -q
+# 1. Install dependencies
+pip install -e .
+cd web && npm install && cd ..
+
+# 2. Seed Demo Environment
+python scripts/seed_demo_data.py --force
+
+# 3. Run Backend Gateway (Terminal 1)
+uvicorn quantmind.api.app:create_app --factory --reload --port 8000
+
+# 4. Run Dedicated Worker Daemon (Terminal 2)
+python -m quantmind.app.worker
+
+# 5. Run Web Console (Terminal 3)
+cd web && npm run dev
+```
+
+Visit `http://localhost:3000` and sign in with demo credentials:
+- `demo_admin` / `QuantMindDemoAdmin2026!`
+
+Or run with Docker Compose:
+```bash
+docker-compose up --build -d
+```
+
+## Running the Automated Test Suite
+
+```bash
+# Run full suite (741+ passed across unit, integration, API, and E2E)
+pytest
+
+# Run 15-step end-to-end quantitative workflow
+pytest tests/e2e/test_e2e_workflow.py -v
+
+# Run Playwright headless browser navigation test
+pytest tests/e2e/test_playwright_ui.py -v
 ```
 
 ## Backtester scope

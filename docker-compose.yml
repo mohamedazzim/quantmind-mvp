@@ -1,0 +1,61 @@
+version: "3.8"
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: quantmind-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_ENV=${APP_ENV:-DEMO}
+      - AUTH_SECRET_KEY=${AUTH_SECRET_KEY:-quantmind-secure-demo-secret-key-2026}
+      - QUANTMIND_DATA_DIR=/app/data
+      - QUANTMIND_CORE_DB_PATH=/app/data/quantmind_core.db
+      - QUANTMIND_APP_DB_PATH=/app/data/quantmind_app.db
+    volumes:
+      - quantmind_data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: quantmind-worker
+    restart: unless-stopped
+    environment:
+      - APP_ENV=${APP_ENV:-DEMO}
+      - AUTH_SECRET_KEY=${AUTH_SECRET_KEY:-quantmind-secure-demo-secret-key-2026}
+      - QUANTMIND_DATA_DIR=/app/data
+      - QUANTMIND_CORE_DB_PATH=/app/data/quantmind_core.db
+      - QUANTMIND_APP_DB_PATH=/app/data/quantmind_app.db
+    volumes:
+      - quantmind_data:/app/data
+    depends_on:
+      api:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        - NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
+    container_name: quantmind-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+    depends_on:
+      - api
+
+volumes:
+  quantmind_data:
+    driver: local

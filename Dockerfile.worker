@@ -1,0 +1,30 @@
+# QuantMind Dedicated Worker Service Dockerfile (PRD v4.0 Productization)
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Install system utilities
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy python project specs and install dependencies
+COPY pyproject.toml /app/
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -e .
+
+# Copy source code and scripts
+COPY src /app/src
+COPY configs /app/configs
+COPY scripts /app/scripts
+
+# Default directory for persistent authoritative ledgers
+ENV QUANTMIND_DATA_DIR=/app/data
+ENV QUANTMIND_CORE_DB_PATH=/app/data/quantmind_core.db
+ENV QUANTMIND_APP_DB_PATH=/app/data/quantmind_app.db
+ENV PYTHONPATH=/app/src
+
+RUN mkdir -p /app/data
+
+CMD ["python", "-m", "quantmind.app.worker"]

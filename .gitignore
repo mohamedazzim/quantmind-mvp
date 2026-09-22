@@ -6,3 +6,14 @@ htmlcov/
 .venv/
 .env
 .DS_Store
+
+# Local runtime data & databases
+data/
+artifacts/
+*.db
+*.db-journal
+
+# Web UI build outputs
+web/node_modules/
+web/.next/
+web/out/

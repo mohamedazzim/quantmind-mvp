@@ -1,0 +1,207 @@
+# QuantMind REST API Documentation
+
+The QuantMind REST API exposes the deterministic v4.0 research, backtesting, and governance platform over HTTP.
+
+- **Base URL**: `http://localhost:8000/api/v1`
+- **Interactive Documentation**: `http://localhost:8000/docs` (Swagger UI) or `/redoc`
+- **Authentication**: Bearer JWT token in the `Authorization` header (`Authorization: Bearer <token>`).
+
+---
+
+## 1. Authentication & User Management
+
+### `POST /api/v1/auth/login`
+Authenticate credentials and obtain a JWT session token.
+- **Request**:
+  ```json
+  {
+    "username": "demo_admin",
+    "password": "QuantMindDemoAdmin2026!"
+  }
+  ```
+- **Response** (`200 OK`):
+  ```json
+  {
+    "access_token": "eyJhbGciOi...",
+    "token_type": "bearer",
+    "user": {
+      "user_id": "USR-fa3041",
+      "username": "demo_admin",
+      "email": "admin@demo.quantmind.local",
+      "role": "ADMIN",
+      "force_password_change": false
+    }
+  }
+  ```
+
+### `GET /api/v1/auth/me`
+Retrieve profile of currently authenticated user.
+- **Headers**: `Authorization: Bearer <token>`
+- **Response** (`200 OK`):
+  ```json
+  {
+    "user_id": "USR-fa3041",
+    "username": "demo_admin",
+    "email": "admin@demo.quantmind.local",
+    "role": "ADMIN",
+    "is_active": true
+  }
+  ```
+
+### `POST /api/v1/auth/change-password`
+Rotate user password. Enforced if `force_password_change` is set.
+- **Request**:
+  ```json
+  {
+    "old_password": "OldPassword123!",
+    "new_password": "NewSecurePassword456!"
+  }
+  ```
+- **Response** (`200 OK`): `{"message": "Password changed successfully"}`
+
+---
+
+## 2. Executive Dashboard
+
+### `GET /api/v1/dashboard/kpis`
+Provides aggregated metrics across research, paper evaluation, and governance ledgers.
+- **Response** (`200 OK`):
+  ```json
+  {
+    "active_paper_strategies": 1,
+    "degraded_strategies": 0,
+    "total_production_trials": 12,
+    "total_net_pnl": 5420.50,
+    "avg_sharpe_ratio": 2.14,
+    "recent_degradations": [],
+    "recent_transitions": []
+  }
+  ```
+
+---
+
+## 3. Versioned Datasets
+
+### `GET /api/v1/datasets`
+Lists registered datasets and their temporal split zones.
+- **Response** (`200 OK`):
+  ```json
+  [
+    {
+      "version": "DS-NIFTY-2026-DEMO",
+      "kind": "LICENSED",
+      "format": "csv",
+      "sha256": "c0d6acce0571...",
+      "timestamp_column": "timestamp",
+      "zones": [
+        {"zone_name": "RESEARCH", "start_ts": "2026-01-02 09:00:00", "end_ts": "2026-01-02 09:04:00"},
+        {"zone_name": "VALIDATION", "start_ts": "2026-01-02 09:05:00", "end_ts": "2026-01-02 09:09:00"},
+        {"zone_name": "FINAL_HOLDOUT", "start_ts": "2026-01-02 09:10:00", "end_ts": "2026-01-02 09:14:00"},
+        {"zone_name": "FORWARD_PAPER", "start_ts": "2026-01-02 09:15:00", "end_ts": "2026-01-02 09:19:00"}
+      ]
+    }
+  ]
+  ```
+
+### `GET /api/v1/datasets/enums`
+Returns valid split zones (`RESEARCH`, `VALIDATION`, `FINAL_HOLDOUT`, `FORWARD_PAPER`) and kinds (`SYNTHETIC`, `LICENSED`).
+
+---
+
+## 4. Strategy Specifications & Lifecycle
+
+### `GET /api/v1/strategies/spec-schema`
+Dynamically returns schema derived from domain compiler (`supported_signals`, valid parameter boundaries).
+
+### `GET /api/v1/strategies`
+Lists registered strategies and current lifecycle states (`IDEA`, `RESEARCH`, `VALIDATION`, `REJECTED`, `PAPER_ELIGIBLE`, `PAPER_ACTIVE`, `DEGRADED`, `RETIRED`).
+
+### `GET /api/v1/strategies/{strategy_id}`
+Returns complete dossier for a strategy: canonical spec, lifecycle history, qualification record, baseline binding, and replay reports.
+
+### `POST /api/v1/strategies/{strategy_id}/activate`
+Promotes a `PAPER_ELIGIBLE` strategy to `PAPER_ACTIVE` (Admin only).
+- **Invariant**: Requires an existing cryptographic baseline in `evaluation_baselines`.
+- **Violation**: Fails with HTTP `422 Unprocessable Entity` (`GOVERNANCE_INTEGRITY_VIOLATION`).
+
+### `POST /api/v1/strategies/{strategy_id}/retire`
+Permanently transitions strategy to `RETIRED` (Admin only). Position must be flat ($0$).
+
+### `POST /api/v1/strategies/{strategy_id}/re-research`
+Transitions `DEGRADED` strategy back to `RESEARCH` (Researcher/Admin).
+
+---
+
+## 5. Research & Trials
+
+### `POST /api/v1/research/candidates/validate`
+Validates declarative candidate spec before reserving budget.
+- **Request**:
+  ```json
+  {
+    "strategy_version": "1.0.0",
+    "feature_version": "1.0.0",
+    "signal_name": "current_bar_momentum",
+    "parameters": {
+      "calendar_session_bars": 30,
+      "session_window": [0.0, 1.0]
+    }
+  }
+  ```
+- **Response** (`200 OK`):
+  ```json
+  {
+    "is_valid": true,
+    "strategy_id": "STRAT-a161a6c1070d45d0c1d89b8d",
+    "errors": []
+  }
+  ```
+
+### `POST /api/v1/research/trials/submit`
+Enqueues asynchronous backtest trial in persistent job queue.
+- **Response** (`200 OK`): `{"job_id": "JOB-10a4", "status": "QUEUED"}`
+
+### `GET /api/v1/research/tasks`
+Lists structured hypothesis tasks generated by the Research Feedback Bridge.
+
+---
+
+## 6. Paper Trading & Replay
+
+- `GET /api/v1/paper/overview`: Active strategies, net PnL, open positions, order totals.
+- `GET /api/v1/paper/orders`: Immutable simulated orders in `PaperLedger`.
+- `GET /api/v1/paper/fills`: Execution fills, fill prices, fees, slippage.
+- `GET /api/v1/paper/positions`: Real-time mark-to-market positions and unrealized PnL.
+- `GET /api/v1/paper/reports`: Cryptographically verified `ReplayReport` JSON summaries.
+- `POST /api/v1/paper/replay/submit`: Enqueue forward paper replay job.
+
+---
+
+## 7. Performance Monitoring & Degradation
+
+- `GET /api/v1/monitoring`: Evaluation window snapshots and degradation breach alerts.
+- `GET /api/v1/monitoring/snapshots`: Rolling window snapshots (`max_drawdown_bps`, `realized_sharpe`).
+- `GET /api/v1/monitoring/degradations`: Deterministic breach events with observed vs threshold values.
+
+---
+
+## 8. Governance & Audit Provenance
+
+### `GET /api/v1/governance/transitions`
+Returns the append-only ledger of lifecycle transitions (`paper_evaluation_transitions`).
+
+### `GET /api/v1/audit/graph/{identifier}`
+Generates the connected 5-type cryptographic provenance DAG for any Strategy, Qualification, Report, Baseline, or Event hash.
+- **Edge Classifications**:
+  - `Type A`: Cryptographic digest/hash binding.
+  - `Type B`: Entity foreign key relationship.
+  - `Type C`: Zero-trial semantic identity derivation.
+  - `Type D`: Lifecycle state precondition constraint.
+  - `Type E`: Dataset temporal zone isolation.
+
+---
+
+## 9. Job Orchestration
+
+- `GET /api/v1/jobs/{job_id}`: Poll job status (`QUEUED`, `RUNNING`, `COMPLETED`, `FAILED`, `CANCELLED`), progress percentage, and `result_ref`.
+- `GET /api/v1/jobs/active`: Lists currently running jobs across worker daemons.
